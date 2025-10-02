@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Completeness Check</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  
+  <script type="module">
+    const { createApp } = Vue;
+    
+    createApp({
+      template: `
+        <div class="container">
+          <header class="header">
+            <h1>📊 Data Completeness Check</h1>
+          </header>
+          
+          <div class="control-panel">
+            <div class="date-inputs">
+              <div class="input-group">
+                <label for="startDate">Start Date:</label>
+                <input 
+                  type="date" 
+                  id="startDate" 
+                  v-model="startDate"
+                  :max="endDate"
+                  :disabled="checking"
+                >
+              </div>
+              <div class="input-group">
+                <label for="endDate">End Date:</label>
+                <input 
+                  type="date" 
+                  id="endDate" 
+                  v-model="endDate"
+                  :min="startDate"
+                  :disabled="checking"
+                >
+              </div>
+              <button @click="checkCompleteness" class="submit-btn" :disabled="checking">
+                {{ checking ? 'Checking...' : 'Check Completeness' }}
+              </button>
+            </div>
+          </div>
+          
+          <div class="results-section" v-if="results.length > 0 || error || checking">
+            <div v-if="error" class="error">
+              Error: {{ error }}
+            </div>
+            
+            <div v-else-if="checking" class="loading">
+              Analyzing data completeness...
+            </div>
+            
+            <div v-else class="results-table">
+              <div class="summary">
+                <span>Total Days: {{ results.length }}</span>
+                <span class="complete">Complete: {{ completeCount }}</span>
+                <span class="partial">Partial: {{ partialCount }}</span>
+                <span class="missing">Missing: {{ missingCount }}</span>
+              </div>
+              
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Holiday Name</th>
+                    <th>Session Type</th>
+                    <th>Expected Bars</th>
+                    <th>Actual Bars</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in results" :key="row.date" :class="getRowClass(row)">
+                    <td>{{ formatDate(row.date) }}</td>
+                    <td>{{ row.holiday_name || '-' }}</td>
+                    <td>{{ formatSessionType(row.session_type) }}</td>
+                    <td>{{ row.expected_bars }}</td>
+                    <td>{{ row.actual_bars }}</td>
+                    <td :class="getStatusClass(row.status)">
+                      {{ row.status }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+      
+      data() {
+        return {
+          startDate: '',
+          endDate: '',
+          results: [],
+          checking: false,
+          error: null
+        }
+      },
+      
+      computed: {
+        completeCount() {
+          return this.results.filter(r => r.status === 'Complete').length;
+        },
+        partialCount() {
+          return this.results.filter(r => r.status === 'Partial').length;
+        },
+        missingCount() {
+          return this.results.filter(r => r.status === 'Missing').length;
+        }
+      },
+      
+      mounted() {
+        this.loadDateRange();
+      },
+      
+      methods: {
+        async loadDateRange() {
+          try {
+            const response = await fetch('/api/data-completeness/date-range');
+            const result = await response.json();
+            
+            if (result.success) {
+              this.startDate = result.minDate ? result.minDate.split('T')[0] : '';
+              this.endDate = result.maxDate ? result.maxDate.split('T')[0] : '';
+            }
+          } catch (error) {
+            console.error('Error loading date range:', error);
+          }
+        },
+        
+        async checkCompleteness() {
+          if (!this.startDate || !this.endDate) {
+            this.error = 'Please select both start and end dates';
+            return;
+          }
+          
+          this.checking = true;
+          this.error = null;
+          this.results = [];
+          
+          try {
+            const response = await fetch('/api/data-completeness/check', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                startDate: this.startDate,
+                endDate: this.endDate
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (!result.success) {
+              throw new Error(result.error || 'Failed to check completeness');
+            }
+            
+            this.results = result.data || [];
+            
+          } catch (error) {
+            this.error = error.message;
+          } finally {
+            this.checking = false;
+          }
+        },
+        
+        formatDate(dateStr) {
+          const date = new Date(dateStr);
+          return date.toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        },
+        
+        formatSessionType(type) {
+          if (!type) return 'Regular';
+          return type.replace('_', ' ').charAt(0).toUpperCase() + type.slice(1).replace('_', ' ');
+        },
+        
+        getRowClass(row) {
+          if (row.status === 'Missing' && row.session_type !== 'closed') {
+            return 'row-missing';
+          }
+          if (row.status === 'Partial') {
+            return 'row-partial';
+          }
+          return '';
+        },
+        
+        getStatusClass(status) {
+          return `status-${status.toLowerCase()}`;
+        }
+      }
+    }).mount('#app');
+  </script>
+  
+  <style>
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    
+    .header h1 {
+      font-size: 2rem;
+      margin: 0;
+    }
+    
+    .control-panel {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    
+    .date-inputs {
+      display: flex;
+      gap: 1.5rem;
+      align-items: flex-end;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    
+    .input-group label {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    
+    .input-group input {
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      font-size: 1rem;
+    }
+    
+    .input-group input:disabled {
+      opacity: 0.5;
+    }
+    
+    .submit-btn {
+      padding: 0.75rem 2rem;
+      background: rgba(74, 222, 128, 0.2);
+      border: 1px solid rgba(74, 222, 128, 0.3);
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      transition: all 0.3s ease;
+    }
+    
+    .submit-btn:hover:not(:disabled) {
+      background: rgba(74, 222, 128, 0.3);
+      transform: translateY(-1px);
+    }
+    
+    .submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .results-section {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    
+    .loading, .error {
+      text-align: center;
+      padding: 3rem;
+      font-size: 1.1rem;
+    }
+    
+    .error {
+      color: #f87171;
+    }
+    
+    .summary {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      font-size: 0.95rem;
+    }
+    
+    .summary .complete {
+      color: #4ade80;
+    }
+    
+    .summary .partial {
+      color: #fbbf24;
+    }
+    
+    .summary .missing {
+      color: #f87171;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    th {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 1rem;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    td {
+      padding: 0.875rem 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    tr:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .row-missing {
+      background: rgba(248, 113, 113, 0.15);
+    }
+    
+    .row-partial {
+      background: rgba(251, 191, 36, 0.15);
+    }
+    
+    .status-complete {
+      color: #4ade80;
+      font-weight: 600;
+    }
+    
+    .status-partial {
+      color: #fbbf24;
+      font-weight: 600;
+    }
+    
+    .status-missing {
+      color: #f87171;
+      font-weight: 600;
+    }
+    
+    /* Date input calendar icon color fix */
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+      cursor: pointer;
+    }
+  </style>
+</body>
+</html>

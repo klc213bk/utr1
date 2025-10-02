@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>US Market Calendar</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  
+  <script type="module">
+    const { createApp } = Vue;
+    
+    createApp({
+      template: `
+        <div class="container">
+          <header class="header">
+            <h1>📅 US Market Calendar</h1>
+            <div class="header-controls">
+              <span class="year-filter">Showing: {{ currentYear }} and beyond</span>
+              <button @click="refreshData" class="refresh-btn" :disabled="loading">
+                {{ loading ? 'Loading...' : '🔄 Refresh' }}
+              </button>
+            </div>
+          </header>
+
+          <div class="calendar-content">
+            <div v-if="loading && !data.length" class="loading">
+              Loading market calendar...
+            </div>
+            
+            <div v-else-if="error" class="error">
+              Error: {{ error }}
+            </div>
+            
+            <div v-else-if="data.length === 0" class="no-data">
+              No calendar data available
+            </div>
+            
+            <div v-else class="calendar-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Holiday Name</th>
+                    <th>Session Type</th>
+                    <th>Market Hours</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template v-for="(yearGroup, year) in groupedData" :key="year">
+                    <tr class="year-separator">
+                      <td colspan="4" class="year-header">{{ year }}</td>
+                    </tr>
+                    <tr v-for="row in yearGroup" :key="row.id" :class="getRowClass(row)">
+                      <td>{{ formatDate(row.date) }}</td>
+                      <td>{{ row.holiday_name || 'Regular Trading Day' }}</td>
+                      <td :class="getSessionClass(row.session_type)">
+                        {{ formatSessionType(row.session_type) }}
+                      </td>
+                      <td>{{ formatMarketHours(row) }}</td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      `,
+      
+      data() {
+        return {
+          data: [],
+          loading: false,
+          error: null,
+          stats: null,
+          currentYear: new Date().getFullYear()
+        }
+      },
+      
+      computed: {
+        groupedData() {
+          const groups = {};
+          this.data.forEach(row => {
+            const year = new Date(row.date).getFullYear();
+            if (!groups[year]) {
+              groups[year] = [];
+            }
+            groups[year].push(row);
+          });
+          return groups;
+        }
+      },
+
+      mounted() {
+        this.loadCalendar();
+      },
+      
+      methods: {
+        async loadCalendar() {
+          this.loading = true;
+          this.error = null;
+          
+          try {
+            const response = await fetch('/api/market-calendar/holidays');
+            const result = await response.json();
+            
+            if (!result.success) {
+              throw new Error(result.error || 'Failed to load data');
+            }
+            
+            this.data = result.data || [];
+            this.currentYear = result.filterYear || new Date().getFullYear(); 
+            this.calculateStats();
+            
+          } catch (error) {
+            this.error = error.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+        
+        refreshData() {
+          this.loadCalendar();
+        },
+        
+        calculateStats() {
+          if (!this.data.length) return;
+          
+          this.stats = {
+            total: this.data.length,
+            holidays: this.data.filter(d => d.session_type === 'closed').length,
+            halfDays: this.data.filter(d => d.session_type === 'half_day').length
+          };
+        },
+        
+        formatDate(dateStr) {
+          const date = new Date(dateStr);
+          return date.toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+        },
+        
+        formatSessionType(type) {
+          return type.replace('_', ' ').toUpperCase();
+        },
+        
+        getSessionClass(type) {
+          return 'session-' + (type === 'half_day' ? 'half' : type);
+        },
+        
+        getRowClass(row) {
+          const today = new Date().toDateString();
+          const rowDate = new Date(row.date).toDateString();
+          return today === rowDate ? 'today' : '';
+        },
+        
+        formatMarketHours(row) {
+          if (!row.market_open || !row.market_close) {
+            return 'Closed';
+          }
+          
+          return this.formatTime(row.market_open) + ' - ' + this.formatTime(row.market_close);
+        },
+        
+        formatTime(time) {
+          const [hour, minute] = time.substring(0, 5).split(':');
+          const h = parseInt(hour);
+          const period = h >= 12 ? 'PM' : 'AM';
+          const displayHour = h > 12 ? h - 12 : h === 0 ? 12 : h;
+          return displayHour + ':' + minute + ' ' + period;
+        }
+      }
+    }).mount('#app');
+  </script>
+  
+  <style>
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+    }
+    
+    .header h1 {
+      font-size: 2rem;
+      margin: 0;
+    }
+    
+    .refresh-btn {
+      padding: 0.5rem 1rem;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    
+    .refresh-btn:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    .refresh-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .calendar-content {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    }
+    
+    .loading, .error, .no-data {
+      text-align: center;
+      padding: 3rem;
+      font-size: 1.1rem;
+    }
+    
+    .error {
+      color: #f87171;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    th {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 1rem;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    td {
+      padding: 0.875rem 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    tr:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    tr.today {
+      background: rgba(96, 165, 250, 0.2);
+    }
+    
+    .session-closed {
+      color: #f87171;
+      font-weight: 600;
+    }
+    
+    .session-half {
+      color: #fbbf24;
+      font-weight: 600;
+    }
+    
+    .session-regular {
+      color: #4ade80;
+    }
+    
+    .footer {
+      margin-top: 2rem;
+      text-align: center;
+    }
+    
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+    }
+    
+    .stats span {
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .year-filter {
+      padding: 0.5rem 1rem;
+      background: rgba(96, 165, 250, 0.2);
+      border: 1px solid rgba(96, 165, 250, 0.3);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      color: #93c5fd;
+    }
+
+    .year-separator td.year-header {
+      background: rgba(0, 0, 0, 0.3);
+      font-size: 1.1rem;
+      font-weight: bold;
+      text-align: center;
+      padding: 0.75rem;
+      color: #fbbf24;
+      letter-spacing: 1px;
+    }
+  </style>
+</body>
+</html>

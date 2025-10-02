@@ -1,0 +1,47 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: tws-api-bridge
+  datasource:
+    # PostgreSQL configuration with TimescaleDB
+    url: jdbc:postgresql://localhost:5432/stocks
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver  # ADD THIS LINE
+    
+    # HikariCP connection pool settings
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 20000
+      idle-timeout: 300000
+      pool-name: TwsBridgeHikariCP	
+
+# IB Connection Configuration
+ib:
+  host: 127.0.0.1
+  port: 7497  # 7497 for TWS Paper, 7496 for TWS Live, 4002 for IB Gateway Paper, 4001 for IB Gateway Live
+  clientId: 0  # Use different client IDs if running multiple connections
+
+# NATS Configuration
+nats:
+  url: nats://localhost:4222  # NATS server URL
+  
+# Logging
+logging:
+  level:
+    root: INFO
+    com.kuan.twsbridge: DEBUG
+    org.springframework.jdbc: INFO
+    com.ib.client: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36}.(%F:%L\\) - %msg%n"
+
+# Swagger/OpenAPI (optional)
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
