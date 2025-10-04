@@ -10,6 +10,8 @@ const { connect } = require('nats');
 const net = require('net');
 const http = require('http');
 const { format, subDays } = require('date-fns');
+const { spawn, exec } = require('child_process');  // Make sure spawn is imported
+const path = require('path');  
 require('dotenv').config();
 
 const app = express();
@@ -1706,9 +1708,6 @@ function setupSimpleMonitoring() {
 // Backtest Services Management
 // ============================================================================
 
-const { spawn, exec } = require('child_process');
-const path = require('path');
-
 // Track service processes
 let serviceProcesses = {
   'strategy-engine': null
@@ -1793,7 +1792,7 @@ app.post('/api/trading-services/:serviceId/start', async (req, res) => {
 
 // Helper: Start a service
 async function startService(serviceId) {
-  console.log(`startService is called`);
+  console.log(`startService is called for: ${serviceId}`);
   console.log(`Checking if ${serviceId} is already running...`);
 
   // Check if already running via health endpoint
@@ -1801,7 +1800,8 @@ async function startService(serviceId) {
     'backtest-server': 'http://localhost:8083/health',
     'strategy-engine': 'http://localhost:8084/health',
     'execution-simulator': 'http://localhost:8085/health',
-    'performance-tracker': 'http://localhost:8086/health'
+    'performance-tracker': 'http://localhost:8086/health',
+    'analytics-server': 'http://localhost:8087/health'
   };
   try {
     const response = await axios.get(healthEndpoints[serviceId], { timeout: 1000 });
@@ -1842,6 +1842,11 @@ async function startService(serviceId) {
         args = ['index.js'];
         cwd = path.join(__dirname, '../../performance-tracker');
         break;
+      case 'analytics-server':  // Add this case
+        command = 'node';
+        args = ['index.js'];
+        cwd = path.join(__dirname, '../../analytics-server');
+        break;  
       default:
         throw new Error(`Unknown service: ${serviceId}`);
     }
@@ -1853,13 +1858,15 @@ async function startService(serviceId) {
       'backtest-server': { port: 8083 },
       'strategy-engine': { port: 8084 },
       'execution-simulator': { port: 8085 },
-      'performance-tracker': { port: 8086 }
+      'performance-tracker': { port: 8086 },
+      'analytics-server': { port: 8087 }
     };
 
     const childProcess = spawn(command, args, {
       cwd,
       detached: false,
       stdio: 'pipe',
+      shell: true,
       env: {
         ...process.env,
         PORT: serviceConfigs[serviceId]?.port || process.env.PORT
@@ -1921,7 +1928,8 @@ async function stopService(serviceId) {
     'backtest-server': 'http://localhost:8083/api/shutdown',
     'strategy-engine': 'http://localhost:8084/api/shutdown',
     'execution-simulator': 'http://localhost:8085/api/shutdown',
-    'performance-tracker': 'http://localhost:8086/api/shutdown'
+    'performance-tracker': 'http://localhost:8086/api/shutdown',
+    'analytics-server': 'http://localhost:8087/api/shutdown'
   };
   
   // Check if we're managing this process
@@ -2002,7 +2010,8 @@ async function stopService(serviceId) {
       'backtest-server': 'http://localhost:8083/health',
       'strategy-engine': 'http://localhost:8084/health',  
       'execution-simulator': 'http://localhost:8085/health',
-      'performance-tracker': 'http://localhost:8086/health'
+      'performance-tracker': 'http://localhost:8086/health',
+      'analytics-server': 'http://localhost:8087/health'
     };
     
     let isRunning = false;

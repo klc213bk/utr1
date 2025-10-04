@@ -27,7 +27,7 @@ export const useSocketsStore = defineStore('sockets', {
       this.mainSocket = io('http://localhost:3000', {
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionDelay: 500,
+        reconnectionDelay: 1000,
         reconnectionAttempts: 10
       })
 
