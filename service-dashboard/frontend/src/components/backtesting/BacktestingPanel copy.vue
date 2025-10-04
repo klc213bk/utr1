@@ -146,10 +146,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject  } from 'vue'
 import axios from 'axios'
-import { io } from 'socket.io-client'
 import { useRouter } from 'vue-router'
+import { useSocketsStore } from '../../stores/sockets'  // Add this import
 
 const router = useRouter()
 const lastCompletedBacktest = ref(null)
@@ -174,8 +174,12 @@ const backtestProgress = ref(0)
 const progressMessage = ref('')
 const currentReplayTime = ref(null)
 
-const backtestSocket = ref(null)
-const backtestConnected = ref(false)
+// Use the socket store directly
+const socketsStore = useSocketsStore()
+
+// Get backtest socket status from store
+const backtestSocket = computed(() => socketsStore.backtestSocket)
+const backtestConnected = computed(() => socketsStore.isBacktestConnected)
 
 // ADD these new refs
 const selectedStrategy = ref('ma_cross')

@@ -69,32 +69,36 @@ const props = defineProps(['socket', 'services'])
 // Use injected services if not passed as props
 // Use store
 const store = useServicesStore()
-const socket = props.socket || inject('socket')
+const socketsStore = inject('socketsStore')
 const loading = ref(false)
 
+const services = computed(() => props.services || {})
+
+// Get socket from props or from the store
+const socket = computed(() => {
+  return props.socket || socketsStore?.mainSocket || null
+})
+
 onMounted(async () => {
-  // Initial load
- // loadServices()
+  // Services are already being updated via props from App.vue
+  console.log('Dashboard mounted, socket available:', !!socket.value)
 })
 
 onUnmounted(() => {
-  if (socket) {
-    socket.disconnect()
-  }
+  // Cleanup if needed
 })
 
 // Filter core services for the grid
-// async function loadServices() {
-//   loading.value = true
-//   try {
-//     await store.fetchServices()
-//     services.value = store.services
-//   } catch (error) {
-//     console.error('Failed to load services:', error)
-//   } finally {
-//     loading.value = false
-//   }
-// }
+const coreServices = computed(() => {
+  const allServices = services.value || {}
+  const coreServicesList = []
+  
+  if (allServices.ib) coreServicesList.push({ id: 'ib', ...allServices.ib })
+  if (allServices.nats) coreServicesList.push({ id: 'nats', ...allServices.nats })
+  if (allServices.postgres) coreServicesList.push({ id: 'postgres', ...allServices.postgres })
+  
+  return coreServicesList
+})
 
 async function toggleService(serviceId, currentStatus) {
   const action = currentStatus === 'online' ? 'stop' : 'start'
@@ -110,21 +114,9 @@ async function toggleService(serviceId, currentStatus) {
   }
 }
 
-const coreServices = computed(() => {
-  const allServices = services.value || {}
-  const coreServicesList = []
-  
-  if (allServices.ib) coreServicesList.push({ id: 'ib', ...allServices.ib })
-  if (allServices.nats) coreServicesList.push({ id: 'nats', ...allServices.nats })
-  if (allServices.postgres) coreServicesList.push({ id: 'postgres', ...allServices.postgres })
-  
-  return coreServicesList
-})
-
 function refreshAll() {
-  if (socket) {
-    socket.emit('refresh')
- //   loadServices()
+  if (socket.value) {
+    socket.value.emit('refresh')
   }
 }
 </script>

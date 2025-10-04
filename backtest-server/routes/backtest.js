@@ -1,3 +1,4 @@
+const logger = require('../logger');
 const express = require('express');
 const router = express.Router();
 const backtestService = require('../services/backtest');
@@ -5,8 +6,11 @@ const backtestService = require('../services/backtest');
 // Run a backtest
 router.post('/run', async (req, res) => {
   console.log('=== Backtest Run Request ===');
-  console.log('Body:', req.body);
-  
+  logger.business.info('Backtest API request received', {
+    body: req.body,
+    ip: req.ip
+  });
+
   try {
     const result = await backtestService.runBacktest(req.body);
     
@@ -27,6 +31,11 @@ router.post('/run', async (req, res) => {
     res.status(400).json({
       success: false,
       error: error.message
+    });
+    logger.business.error('Failed to start backtest', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body
     });
   }
 });

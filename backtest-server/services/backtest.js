@@ -1,3 +1,4 @@
+const logger = require('../logger');
 const { getNATS } = require('../config/connections');
 const axios = require('axios');
 
@@ -39,7 +40,16 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
   
   // Generate backtest ID
   const backtestId = `bt_${Date.now()}`;
-  
+  logger.setSessionId(backtestId);
+  logger.business.info('Backtest initialized', {
+    backtestId,
+    startDate,
+    endDate,
+    symbol,
+    strategy,
+    speed
+  });
+
   // Initialize backtest state
   backtestState.isRunning = true;
   backtestState.currentBacktest = {
@@ -73,6 +83,10 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
       // Step 1: Initialize the strategy in strategy-engine
       console.log(`Initializing strategy: ${strategy}`);
       try {
+        logger.business.info('Loading strategy', { 
+          strategy, 
+          backtestId 
+        });
         const strategyResponse = await fetch('http://localhost:8084/strategies/load', {
           method: 'POST',
           headers: {
@@ -88,6 +102,11 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
         const data = await strategyResponse.json();
         console.log(`Strategy loaded: ${data.id}`);
       } catch (error) {
+        logger.business.error('Strategy loading failed', {
+          error: error.message,
+          strategy,
+          backtestId
+        });
         console.error('Failed to load strategy:', error.message);
       }
 
@@ -185,6 +204,11 @@ async function executeBacktest(backtestId) {
       // Log progress every 10%
       if (Math.floor(replayStatus.progress / 10) > Math.floor((replayStatus.progress - 1) / 10)) {
         console.log(`📊 Backtest ${backtestId}: ${replayStatus.progress.toFixed(1)}% complete`);
+        logger.business.info('Backtest progress', {
+          backtestId,
+          progress: replayStatus.progress,
+          barsProcessed: replayStatus.barsPublished
+        });
       }
     }
   }, 250); // Check every 250ms for smoother updates
@@ -222,6 +246,11 @@ async function executeBacktest(backtestId) {
   }));
   console.log(`📢 Published 'backtest-complete' to NATS for ${backtestId}`); 
   console.log(`✅ Backtest ${backtestId} completed with results:`, results);
+  logger.business.info('Backtest completed', {
+    backtestId,
+    results,
+    duration: Date.now() - new Date(backtestState.currentBacktest.startedAt).getTime()
+});
 
   return results;
 }

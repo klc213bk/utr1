@@ -26,69 +26,54 @@
 
     <!-- Main Content -->
     <div class="main-content">
-      <router-view :socket="socket" :services="services" />
+      <router-view :socket="socketsStore.mainSocket" :services="services" />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, provide} from 'vue'
+import { ref, onMounted, provide, computed, onUnmounted } from 'vue'
 import { useSocketsStore } from './stores/sockets'
 //import { io } from 'socket.io-client'
 
 const socketsStore = useSocketsStore()
 const services = ref({})
 
-const socketConnected = ref(false)
-const socket = ref(null)
-
-// function initializeSockets() {
-//   socketsStore.initMainSocket()
-//   socketsStore.initBacktestSocket()
-  
-//   if (socketsStore.mainSocket) {
-//     socketsStore.mainSocket.on('services-update', (data) => {
-//       services.value = data
-//     })
-//   }
-// }
+// Use the socket from store instead of local ref
+const mainSocket = computed(() => socketsStore.mainSocket)
+const socketConnected = computed(() => socketsStore.isMainConnected)
 
 onMounted(() => {
   
   socketsStore.initMainSocket()
-  //socketsStore.initBacktestSocket()
 
-  // Initialize WebSocket connection
-  // socket = io('http://localhost:3000', {
-  //   transports: ['websocket', 'polling']
-  // })
-
-  if (socket.value) {
-    socket.on('connect', () => {
-      socketConnected.value = true
-    })
-
-    socket.on('disconnect', () => {
-      socketConnected.value = false
-    })
-
-    socket.on('services-update', (data) => {
+  // Listen for services updates when socket is available
+  if (socketsStore.mainSocket) {
+    socketsStore.mainSocket.on('services-update', (data) => {
       services.value = data
     })
   }
 
+  // Wait a bit for socket to initialize, then set up listeners
+  setTimeout(() => {
+    if (socketsStore.mainSocket) {
+      socketsStore.mainSocket.on('services-update', (data) => {
+        services.value = data
+      })
+    }
+  }, 100)
+
   // Provide socket to all child components
   provide('socketsStore', socketsStore)
-  provide('socket', socket.value)
   provide('services', services)
 })
 
-// watch(() => route.path, () => {
-//   // Re-initialize if disconnected
-//   if (!socketsStore.isMainConnected) {
-//     initializeSockets()
-//   }
-// })
+onUnmounted(() => {
+  // Clean up socket listeners
+  if (socketsStore.mainSocket) {
+    socketsStore.mainSocket.off('services-update')
+  }
+})
 
 </script>
 

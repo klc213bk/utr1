@@ -27,7 +27,8 @@ export const useSocketsStore = defineStore('sockets', {
       this.mainSocket = io('http://localhost:3000', {
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionDelay: 500
+        reconnectionDelay: 500,
+        reconnectionAttempts: 10
       })
 
       this.mainSocket.on('connect', () => {
@@ -37,6 +38,11 @@ export const useSocketsStore = defineStore('sockets', {
 
       this.mainSocket.on('disconnect', () => {
         console.log('Main socket disconnected')
+        this.mainConnected = false
+      })
+
+      this.mainSocket.on('connect_error', (error) => {
+        console.log('Main socket connection error:', error.message)
         this.mainConnected = false
       })
 
@@ -61,7 +67,7 @@ export const useSocketsStore = defineStore('sockets', {
 
       this.backtestSocket.on('connect', () => {
         console.log('Backtest socket connected')
-        this.backtestConnected = false
+        this.backtestConnected = true
       })
 
       this.backtestSocket.on('disconnect', () => {

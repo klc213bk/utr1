@@ -13,7 +13,7 @@
         </select>
       </div>
 
-      <!-- Backtest Selector -->
+      <!-- Session Selector -->
       <div v-if="selectedMode === 'backtest'" class="session-selector">
         <label>Select Backtest:</label>
         <select v-model="selectedBacktestId" @change="loadBacktestResults">
