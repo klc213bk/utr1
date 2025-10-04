@@ -40,7 +40,6 @@ cp .env.example .env
 # Development
 npm run dev
 
-(可以manually start, UI stop)
 npm start 
 
 # Production

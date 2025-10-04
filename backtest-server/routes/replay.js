@@ -24,7 +24,7 @@ router.post('/start', async (req, res) => {
       });
     }
     
-    if (start >= end) {
+    if (start > end) {
       return res.status(400).json({
         success: false,
         error: 'startDate must be before endDate'

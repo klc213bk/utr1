@@ -40,7 +40,7 @@ app.post('/api/shutdown', (req, res) => {
   
   // Gracefully close connections
   setTimeout(() => {
-    process.exit(0);
+    shutdown();
   }, 1000);
 });
 

@@ -1,3 +1,4 @@
+const { getNATS } = require('../config/connections');
 const axios = require('axios');
 
 function getIO() {
@@ -15,16 +16,18 @@ let backtestState = {
 };
 
 // Run a complete backtest
+// ===== FIX for backtest-server/services/backtest.js =====
+// REPLACE the entire runBacktest function with this corrected version:
+
 async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_cross', speed = 10 }) {
-  console.log(`📊 runBacktest is called!!!`)
   // Validation
   if (!startDate || !endDate) {
     throw new Error('Start date and end date are required');
   }
   
   // Simple string comparison works for YYYY-MM-DD format
-  if (startDate >= endDate) {
-    throw new Error('Start date must be before end date');
+  if (startDate > endDate) {  // Changed from >= to >
+    throw new Error('Start date cannot be after end date');
   }
   
   if (backtestState.isRunning) {
@@ -51,21 +54,41 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
     progress: 0
   };
   
-  // Start the backtest asynchronously - DON'T AWAIT
+  // Start the backtest asynchronously
   setImmediate(async () => {
     try {
+      const natsConnection = getNATS();
+      
+      // PUBLISH TO NATS when starting
+      natsConnection.publish('backtest-started', JSON.stringify({
+        backtestId,
+        startDate,
+        endDate,
+        strategy,
+        symbol,
+        speed
+      }));
+      console.log(`📢 Published 'backtest-started' to NATS for ${backtestId}`);
+
       // Step 1: Initialize the strategy in strategy-engine
       console.log(`Initializing strategy: ${strategy}`);
       try {
-        const strategyResponse = await axios.post('http://localhost:8084/strategies/load', {
-          id: backtestId,
-          strategy: strategy,
-          symbol: symbol
+        const strategyResponse = await fetch('http://localhost:8084/strategies/load', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            id: backtestId,
+            strategy: strategy,
+            symbol: symbol
+          })
         });
-        console.log(`Strategy loaded: ${strategyResponse.data.id}`);
+        
+        const data = await strategyResponse.json();
+        console.log(`Strategy loaded: ${data.id}`);
       } catch (error) {
         console.error('Failed to load strategy:', error.message);
-        // Continue anyway - strategy engine might not be running
       }
 
       // Step 2: Start historical data replay
@@ -77,11 +100,11 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
         speed
       });
       
-      // Step 2: Run the backtest
+      // Step 3: Run the backtest
       backtestState.currentBacktest.status = 'running';
       const results = await executeBacktest(backtestId);
       
-      // Step 3: Complete
+      // Step 4: Complete
       backtestState.currentBacktest.status = 'completed';
       backtestState.currentBacktest.completedAt = new Date().toISOString();
       backtestState.currentBacktest.results = results;
@@ -108,7 +131,13 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
       backtestState.currentBacktest.status = 'failed';
       backtestState.currentBacktest.error = error.message;
       
-      // Emit error event
+      // PUBLISH ERROR TO NATS
+      const natsConnection = getNATS();
+      natsConnection.publish('backtest-error', JSON.stringify({
+        backtestId,
+        error: error.message
+      }));
+      
       const io = getIO();
       if (io) {
         io.emit('backtest-error', {
@@ -120,19 +149,20 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
     } finally {
       backtestState.isRunning = false;
     }
-
-    // Return immediately with backtest ID
-    return {
-      backtestId,
-      message: 'Backtest started',
-      status: 'initializing'
-    };
   });
+
+  // IMPORTANT: Return immediately with backtest ID (moved outside setImmediate)
+  return {
+    backtestId,
+    message: 'Backtest started',
+    status: 'initializing'
+  };
 }
 
 // Execute the actual backtest logic
 async function executeBacktest(backtestId) {
   const io = getIO();
+  const natsConnection = getNATS();
 
   // Monitor replay progress more frequently
   let checkInterval = setInterval(() => {
@@ -184,7 +214,15 @@ async function executeBacktest(backtestId) {
     completedAt: new Date().toISOString()
   };
   
+  // PUBLISH COMPLETION TO NATS
+  natsConnection.publish('backtest-complete', JSON.stringify({
+    backtestId,
+    results,
+    completedAt: new Date().toISOString()
+  }));
+  console.log(`📢 Published 'backtest-complete' to NATS for ${backtestId}`); 
   console.log(`✅ Backtest ${backtestId} completed with results:`, results);
+
   return results;
 }
 
@@ -208,10 +246,23 @@ function stopBacktest() {
     throw new Error('No backtest is running');
   }
   
+  // Get the backtestId from the current backtest state
+  const backtestId = backtestState.currentBacktest?.id;
+  
   // Stop the replay
   const replay = require('./replay');
   replay.stopReplay();
   
+  // PUBLISH CANCELLATION TO NATS
+  const natsConnection = getNATS();
+  if (backtestId && natsConnection) {
+    natsConnection.publish('backtest-cancelled', JSON.stringify({
+      backtestId,
+      cancelledAt: new Date().toISOString()
+    }));
+    console.log(`📢 Published 'backtest-cancelled' to NATS for ${backtestId}`);
+  }
+
   // Update state
   backtestState.isRunning = false;
   if (backtestState.currentBacktest) {

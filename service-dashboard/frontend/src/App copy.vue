@@ -32,64 +32,44 @@
 </template>
 
 <script setup>
-import { ref, onMounted, provide} from 'vue'
-import { useSocketsStore } from './stores/sockets'
-//import { io } from 'socket.io-client'
-
-const socketsStore = useSocketsStore()
-const services = ref({})
+import { ref, onMounted, onUnmounted, provide } from 'vue'
+import { io } from 'socket.io-client'
 
 const socketConnected = ref(false)
-const socket = ref(null)
-
-// function initializeSockets() {
-//   socketsStore.initMainSocket()
-//   socketsStore.initBacktestSocket()
-  
-//   if (socketsStore.mainSocket) {
-//     socketsStore.mainSocket.on('services-update', (data) => {
-//       services.value = data
-//     })
-//   }
-// }
+const services = ref({})
+let socket = null
 
 onMounted(() => {
-  
-  socketsStore.initMainSocket()
-  //socketsStore.initBacktestSocket()
-
   // Initialize WebSocket connection
-  // socket = io('http://localhost:3000', {
-  //   transports: ['websocket', 'polling']
-  // })
+  socket = io('http://localhost:3000', {
+    transports: ['websocket', 'polling']
+  })
 
-  if (socket.value) {
-    socket.on('connect', () => {
-      socketConnected.value = true
-    })
+  socket.on('connect', () => {
+    console.log('Connected to server')
+    socketConnected.value = true
+  })
 
-    socket.on('disconnect', () => {
-      socketConnected.value = false
-    })
+  socket.on('disconnect', () => {
+    console.log('Disconnected from server')
+    socketConnected.value = false
+  })
 
-    socket.on('services-update', (data) => {
-      services.value = data
-    })
-  }
+  socket.on('services-update', (data) => {
+    console.log('Services update received:', data)
+    services.value = data
+  })
 
   // Provide socket to all child components
-  provide('socketsStore', socketsStore)
-  provide('socket', socket.value)
+  provide('socket', socket)
   provide('services', services)
 })
 
-// watch(() => route.path, () => {
-//   // Re-initialize if disconnected
-//   if (!socketsStore.isMainConnected) {
-//     initializeSockets()
-//   }
-// })
-
+onUnmounted(() => {
+  if (socket) {
+    socket.disconnect()
+  }
+})
 </script>
 
 <style>
