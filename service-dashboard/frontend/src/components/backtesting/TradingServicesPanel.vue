@@ -264,17 +264,28 @@ async function checkHealth() {
     try {
       const response = await fetch(service.healthEndpoint)
       if (response.ok) {
+        const wasOffline = service.status !== 'running'
         service.status = 'running'
 
-        // ADD: If backtest server is running but socket not connected
-        if (service.id === 'backtest-server' && socketsStore && !socketsStore.isBacktestConnected) {
-          socketsStore.initBacktestSocket()
+        // If backtest server just came online, initialize its socket
+        if (service.id === 'backtest-server' && wasOffline) {
+          console.log('Backtest server came online, initializing socket...')
+          if (socketsStore && !socketsStore.isBacktestConnected) {
+            setTimeout(() => {
+              socketsStore.initBacktestSocket()
+            }, 500) // Small delay to ensure server is ready
+          }
         }
       } else {
         service.status = 'stopped'
       }
     } catch (error) {
       service.status = 'stopped'
+      
+      // If backtest server went offline, disconnect socket
+      if (service.id === 'backtest-server' && socketsStore && socketsStore.isBacktestConnected) {
+        socketsStore.disconnectBacktestSocket()
+      }
     }
   }
 }

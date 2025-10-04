@@ -1,3 +1,5 @@
+const logger = require('../logger');
+
 function getIO() {
   return require('../index').io;
 }
@@ -22,6 +24,12 @@ let replayState = {
 
 // Start replay
 async function startReplay({ startDate, endDate, speed = 1 }) {
+  logger.business.info('Starting data replay', {
+    backtestId,
+    startDate,
+    endDate,
+    speed
+  });
   if (replayState.isRunning) {
     throw new Error('Replay already in progress');
   }
@@ -52,6 +60,13 @@ async function startReplay({ startDate, endDate, speed = 1 }) {
     replayState.error = error.message;
   });
   
+  logger.business.info('Replay started', {
+    startDate,
+    endDate,
+    speed,
+    sessionId: logger.currentSessionId
+  });
+
   return replayState;
 }
 
@@ -192,9 +207,21 @@ async function replayBars(startDate, endDate, speed) {
             const actualBarsPerSecond = replayState.barsPublished / elapsedTime;
             console.log(`📈 Progress: ${replayState.barsPublished}/${replayState.totalBars} bars (${replayState.progress.toFixed(1)}%)`);
             console.log(`   Actual rate: ${actualBarsPerSecond.toFixed(2)} bars/sec`);
+            logger.business.debug('Replay progress', {
+              barsPublished: replayState.barsPublished,
+              totalBars: replayState.totalBars,
+              progress: replayState.progress.toFixed(1),
+              currentTime: bar.time
+            });
           }
         } catch (error) {
           console.error('Failed to publish bar:', error);
+          logger.business.error('Replay error', {
+            error: error.message,
+            stack: error.stack,
+            barsPublished: replayState.barsPublished,
+            progress: replayState.progress
+          });
         }
       }
     }
