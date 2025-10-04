@@ -71,7 +71,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject } from 'vue'
 import axios from 'axios'
 
 // State
@@ -81,6 +81,8 @@ const message = ref('')
 const messageType = ref('info')
 
 const tradingMode = ref('idle') // 'idle', 'backtest', 'live'
+const socketsStore = inject('socketsStore')
+console.log('Socket store in TradingServicesPanel:', socketsStore)  // Debug log
 
 // Services configuration - only Strategy Engine for now
 const services = ref([
@@ -104,11 +106,23 @@ const services = ref([
     port: 8085,
     status: 'stopped',
     healthEndpoint: 'http://localhost:8085/health'
+  },
+  {
+    id: 'performance-tracker',
+    name: 'Performance Tracker',
+    status: 'stopped',
+    port: 8086,
+    healthEndpoint: 'http://localhost:8086/health',
+    description: 'Tracks backtest performance and P&L'
+  },
+  {
+    id: 'analytics-server',
+    name: 'Analytics Server',
+    status: 'stopped',
+    port: 8087,
+    healthEndpoint: 'http://localhost:8087/health',
+    description: 'Serve historical backtest results'
   }
-  // Future services:
-  // { id: 'executor', name: 'Execution Simulator', port: 8085, status: 'stopped' },
-  // { id: 'tracker', name: 'Performance Tracker', port: 8086, status: 'stopped' },
-  // { id: 'risk', name: 'Risk Manager', port: 8087, status: 'stopped' }
 ])
 
 // Computed
@@ -216,6 +230,25 @@ async function toggleService(serviceId) {
       service.status = action === 'start' ? 'running' : 'stopped'
       message.value = `${service.name} ${action}ed successfully`
       messageType.value = 'success'
+
+      // ADD: Handle backtest socket
+      if (serviceId === 'backtest-server') {
+        if (action === 'start') {
+          console.log('Starting backtest server, will init socket in 2s')
+          setTimeout(() => {
+            console.log('Initializing backtest socket, store:', socketsStore)
+            if (socketsStore) {
+              socketsStore.initBacktestSocket()
+            } else {
+              console.error('Socket store not available!')
+            }
+          }, 2000)
+        } else {
+          if (socketsStore) {
+            socketsStore.disconnectBacktestSocket()
+          }
+        }
+      }
     }
   } catch (error) {
     message.value = `Failed to ${action} ${service.name}: ${error.message}`
@@ -231,12 +264,28 @@ async function checkHealth() {
     try {
       const response = await fetch(service.healthEndpoint)
       if (response.ok) {
+        const wasOffline = service.status !== 'running'
         service.status = 'running'
+
+        // If backtest server just came online, initialize its socket
+        if (service.id === 'backtest-server' && wasOffline) {
+          console.log('Backtest server came online, initializing socket...')
+          if (socketsStore && !socketsStore.isBacktestConnected) {
+            setTimeout(() => {
+              socketsStore.initBacktestSocket()
+            }, 500) // Small delay to ensure server is ready
+          }
+        }
       } else {
         service.status = 'stopped'
       }
     } catch (error) {
       service.status = 'stopped'
+      
+      // If backtest server went offline, disconnect socket
+      if (service.id === 'backtest-server' && socketsStore && socketsStore.isBacktestConnected) {
+        socketsStore.disconnectBacktestSocket()
+      }
     }
   }
 }

@@ -53,7 +53,7 @@
             />
           </div>
 
-          <!-- Simple Strategy Selection -->
+          <!-- ADD: Simple Strategy Selection -->
           <div class="form-group">
             <label for="strategy">Strategy</label>
             <select 
@@ -68,7 +68,7 @@
             </select>
           </div>
 
-          <!-- Speed Control -->
+          <!-- ADD: Speed Control -->
           <div class="form-group">
             <label>Replay Speed</label>
             <div class="speed-buttons">
@@ -146,11 +146,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject  } from 'vue'
 import axios from 'axios'
-import { io } from 'socket.io-client'
 import { useRouter } from 'vue-router'
-import { inject } from 'vue'
+import { useSocketsStore } from '../../stores/sockets'  // Add this import
 
 const router = useRouter()
 const lastCompletedBacktest = ref(null)
@@ -175,13 +174,16 @@ const backtestProgress = ref(0)
 const progressMessage = ref('')
 const currentReplayTime = ref(null)
 
+// Use the socket store directly
+const socketsStore = useSocketsStore()
+
+// Get backtest socket status from store
+const backtestSocket = computed(() => socketsStore.backtestSocket)
+const backtestConnected = computed(() => socketsStore.isBacktestConnected)
+
 // ADD these new refs
 const selectedStrategy = ref('ma_cross')
 const replaySpeed = ref(10)
-
-const socketsStore = inject('socketsStore')
-const backtestSocket = computed(() => socketsStore?.backtestSocket)
-const backtestConnected = computed(() => socketsStore?.isBacktestConnected || false)
 
 // ADD speed options
 const speeds = [
@@ -206,6 +208,81 @@ const replaySpeedLabel = computed(() => {
   return replaySpeed.value === 0 ? 'Max speed' : `${replaySpeed.value}x speed`
 })
 
+
+
+function connectToBacktestServer() {
+  if (!backtestSocket.value || !backtestSocket.value.connected) {
+    backtestSocket.value = io('http://localhost:8083', {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    })
+    
+    backtestSocket.value.on('connect_error', (error) => {
+      console.log('Backtest server not available:', error.message)
+      backtestConnected.value = false
+      // Don't show error to user - just disable backtest functionality
+    })
+
+    backtestSocket.value.io.on('reconnect_attempt', (attemptNumber) => {
+      console.log('Attempting to reconnect to backtest server...', attemptNumber)
+    })
+
+    backtestSocket.value.on('connect', () => {
+      console.log('Connected to backtest server')
+      backtestConnected.value = true
+    })
+    
+    backtestSocket.value.on('disconnect', () => {
+      console.log('Disconnected from backtest server')
+      backtestConnected.value = false
+    })
+
+    backtestSocket.value.on('backtest-progress', (data) => {
+      progress.value = Math.round(data.progress || 0)
+      message.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
+      messageType.value = 'info'
+      
+      if (data.currentTime) {
+        // Optional: show current replay time
+        console.log('Current replay time:', new Date(data.currentTime).toLocaleTimeString())
+      }
+    })
+    
+    backtestSocket.value.on('replay-progress', (data) => {
+      if (data.barsPublished && data.totalBars) {
+        progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
+      }
+    })
+
+    backtestSocket.value.on('backtest-complete', (data) => {
+      console.log('Backtest completed:', data)
+      lastCompletedBacktest.value = data
+      progress.value = 100
+      progressMessage.value = ''  // Clear the "Calculating..." message
+  
+      // Show the actual results in the message
+      if (data.results) {
+        message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
+      } else {
+        message.value = 'Backtest completed successfully!'
+      }
+      
+      messageType.value = 'success'
+      isRunning.value = false
+    })
+    
+    backtestSocket.value.on('backtest-error', (data) => {
+      isRunning.value = false
+      progress.value = 0
+      message.value = data.error || 'Backtest failed'
+      messageType.value = 'error'
+    })
+
+  }
+}
+
 function viewResults() {
   if (lastCompletedBacktest.value?.backtestId) {
     router.push(`/analytics/backtest/${lastCompletedBacktest.value.backtestId}`)
@@ -224,61 +301,95 @@ onMounted(() => {
     setupSocketListeners()
   }
 
-  // Watch for backtest socket availability
-  const checkBacktestSocket = () => {
-    if (backtestSocket.value && !backtestSocket.value.hasListeners('backtest-progress')) {
-      backtestSocket.value.on('backtest-progress', (data) => {
-        progress.value = Math.round(data.progress || 0)
-        message.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
-        messageType.value = 'info'
-        
-        if (data.currentTime) {
-          console.log('Current replay time:', new Date(data.currentTime).toLocaleTimeString())
-        }
-      })
-      
-      backtestSocket.value.on('replay-progress', (data) => {
-        if (data.barsPublished && data.totalBars) {
-          progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
-        }
-      })
+  // Connect to backtest server
+  // backtestSocket.value = io('http://localhost:8083', {
+  //   transports: ['websocket', 'polling'],
+  //   reconnection: true,
+  //   reconnectionAttempts: 5,
+  //   reconnectionDelay: 1000,
+  // })
+  
+  // backtestSocket.value.on('connect_error', (error) => {
+  //   console.log('Backtest server not available:', error.message)
+  //   backtestConnected.value = false
+  //   // Don't show error to user - just disable backtest functionality
+  // })
 
-      backtestSocket.value.on('backtest-complete', (data) => {
-        console.log('Backtest completed:', data)
-        lastCompletedBacktest.value = data
-        progress.value = 100
-        progressMessage.value = ''
-        
-        if (data.results) {
-          message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
-        } else {
-          message.value = 'Backtest completed successfully!'
-        }
-        
-        messageType.value = 'success'
-        isRunning.value = false
-      })
-      
-      backtestSocket.value.on('backtest-error', (data) => {
-        isRunning.value = false
-        progress.value = 0
-        message.value = data.error || 'Backtest failed'
-        messageType.value = 'error'
-      })
+  // backtestSocket.value.io.on('reconnect_attempt', (attemptNumber) => {
+  //   console.log('Attempting to reconnect to backtest server...', attemptNumber)
+  // })
+
+  // backtestSocket.value.on('connect', () => {
+  //   console.log('Connected to backtest server')
+  //   backtestConnected.value = true
+  // })
+  
+  // backtestSocket.value.on('disconnect', () => {
+  //   console.log('Disconnected from backtest server')
+  //   backtestConnected.value = false
+  // })
+
+  // backtestSocket.value.on('backtest-progress', (data) => {
+  //   progress.value = Math.round(data.progress || 0)
+  //   message.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
+  //   messageType.value = 'info'
+    
+  //   if (data.currentTime) {
+  //     // Optional: show current replay time
+  //     console.log('Current replay time:', new Date(data.currentTime).toLocaleTimeString())
+  //   }
+  // })
+  
+  // backtestSocket.value.on('replay-progress', (data) => {
+  //   if (data.barsPublished && data.totalBars) {
+  //     progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
+  //   }
+  // })
+
+  // backtestSocket.value.on('backtest-completed', (data) => {
+  //   isRunning.value = false
+  //   progress.value = 100
+  //   message.value = `Backtest completed! Return: ${data.totalReturn}%, Sharpe: ${data.sharpe}`
+  //   messageType.value = 'success'
+  // })
+  
+  // backtestSocket.value.on('backtest-error', (data) => {
+  //   isRunning.value = false
+  //   progress.value = 0
+  //   message.value = data.error || 'Backtest failed'
+  //   messageType.value = 'error'
+  // })
+
+  // Connect to backtest server
+  connectToBacktestServer()
+  
+  // Check connection status every 2 seconds
+  setInterval(() => {
+    checkBacktestServerStatus()
+  }, 2000)
+
+})
+
+async function checkBacktestServerStatus() {
+  try {
+    const response = await fetch('http://localhost:8083/health')
+    if (response.ok) {
+      if (!backtestConnected.value) {
+        // Server came online, connect socket
+        connectToBacktestServer()
+      }
+      backtestConnected.value = true
+    } else {
+      backtestConnected.value = false
+    }
+  } catch (error) {
+    backtestConnected.value = false
+    // If socket is connected but server is down, disconnect
+    if (backtestSocket.value && backtestSocket.value.connected) {
+      backtestSocket.value.disconnect()
     }
   }
-
-  // Check immediately
-  checkBacktestSocket()
-  
-  // Also check periodically in case socket connects later
-  const interval = setInterval(() => {
-    if (backtestSocket.value) {
-      checkBacktestSocket()
-      clearInterval(interval)
-    }
-  }, 1000)
-})
+}
 
 // Computed Properties
 const maxDate = computed(() => {
@@ -458,6 +569,10 @@ onUnmounted(() => {
     props.socket.off('backtest-progress')
     props.socket.off('backtest-complete')
     props.socket.off('backtest-error')
+  }
+
+  if (backtestSocket.value) {
+    backtestSocket.value.disconnect()
   }
 })
 </script>

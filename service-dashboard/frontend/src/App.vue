@@ -1,281 +1,240 @@
 <template>
   <div id="app">
-    <header class="app-header">
-      <h1>🎛️ Service Dashboard</h1>
-      <div class="connection-status">
-        <span class="status-dot" :class="socketConnected ? 'connected' : 'disconnected'"></span>
-        {{ socketConnected ? 'Connected' : 'Disconnected' }}
+    <!-- Navigation Bar -->
+    <nav class="main-nav">
+      <div class="nav-brand">
+        <span class="logo">🎛️</span>
+        <span class="brand-text">Trading System</span>
       </div>
-    </header>
+      <div class="nav-links">
+        <router-link to="/" class="nav-link" :class="{ active: $route.path === '/' }">
+          <span class="nav-icon">🏠</span>
+          <span>Dashboard</span>
+        </router-link>
+        <router-link to="/analytics" class="nav-link" :class="{ active: $route.path.includes('/analytics') }">
+          <span class="nav-icon">📈</span>
+          <span>Analytics</span>
+        </router-link>
+      </div>
+      <div class="nav-status">
+        <div class="connection-status">
+          <span class="status-dot" :class="socketConnected ? 'connected' : 'disconnected'"></span>
+          {{ socketConnected ? 'Connected' : 'Disconnected' }}
+        </div>
+      </div>
+    </nav>
 
-    <main class="dashboard">
-      <div class="services-grid">
-        <ServiceCard
-          v-for="service in services"
-          :key="service.id"
-          :service="service"
-          :socket="socket"  
-          @toggle="toggleService"
-        />
-      </div>
-
-      <!-- ADD this market data section -->
-      <div class="market-data-section">
-        <h2 class="section-title">📈 Market Data Streaming</h2>
-        <MarketDataCard 
-          :ibConnected="services.ib?.status === 'online'"
-          :socket="socket"
-        />
-      </div>
-     
-      <!-- ADD: Historical Data Section -->
-      <div class="historical-data-section">
-        <HistoricalDataPanel
-          :ibConnected="services.ib?.status === 'online'"
-          :socket="socket"
-        />
-      </div>
-
-      <div class="trading-services-section">
-        <TradingServicesPanel  />
-      </div>
-
-      <!-- NEW: Backtesting Section -->
-      <div class="backtesting-section">
-        <BacktestingPanel
-          :socket="socket"
-        />
-      </div>
-
-      <div class="refresh-section">
-        <button @click="refreshAll" class="refresh-button" :disabled="loading">
-          {{ loading ? 'Refreshing...' : '🔄 Refresh All' }}
-        </button>
-        <p class="last-update">Auto-refresh every 10 seconds</p>
-      </div>
-    </main>
+    <!-- Main Content -->
+    <div class="main-content">
+      <router-view :socket="socketsStore.mainSocket" :services="services" />
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import ServiceCard from './components/ServiceCard.vue'
-import MarketDataCard from './components/MarketDataCard.vue'
-import HistoricalDataPanel from './components/HistoricalDataPanel.vue'
-import TradingServicesPanel  from './components/backtesting/TradingServicesPanel.vue'
-import BacktestingPanel from './components/backtesting/BacktestingPanel.vue'
-import { useServicesStore } from './stores/services'
-import { io } from 'socket.io-client'
+import { ref, onMounted, provide, computed, onUnmounted } from 'vue'
+import { useSocketsStore } from './stores/sockets'
+//import { io } from 'socket.io-client'
 
-const store = useServicesStore()
+const socketsStore = useSocketsStore()
 const services = ref({})
-const socketConnected = ref(false)
-const loading = ref(false)
-let socket = null
+
+// Use the socket from store instead of local ref
+const mainSocket = computed(() => socketsStore.mainSocket)
+const socketConnected = computed(() => socketsStore.isMainConnected)
 
 onMounted(() => {
-  // Initialize WebSocket connection
-  socket = io('http://localhost:3000', {
-    transports: ['websocket', 'polling']
-  })
+  
+  socketsStore.initMainSocket()
 
-  socket.on('connect', () => {
-    console.log('Connected to server')
-    socketConnected.value = true
-  })
+  // Listen for services updates when socket is available
+  if (socketsStore.mainSocket) {
+    socketsStore.mainSocket.on('services-update', (data) => {
+      services.value = data
+    })
+  }
 
-  socket.on('disconnect', () => {
-    console.log('Disconnected from server')
-    socketConnected.value = false
-  })
-
-  socket.on('services-update', (data) => {
-    console.log('Services update received:', data)
-    services.value = data
-    store.updateServices(data)
-  })
-
-  socket.on('service-control', (result) => {
-    console.log('Control result:', result)
-  })
-
-  socket.on('ib-subscriptions-update', (data) => {
-    console.log('IB subscriptions update:', data)
-    if (services.value.ib && services.value.ib.details) {
-      services.value.ib.details.subscriptions = data
+  // Wait a bit for socket to initialize, then set up listeners
+  setTimeout(() => {
+    if (socketsStore.mainSocket) {
+      socketsStore.mainSocket.on('services-update', (data) => {
+        services.value = data
+      })
     }
-  })
+  }, 100)
 
-  socket.on('nats-subjects-update', (data) => {
-    console.log('NATS subjects update:', data)
-    if (services.value.nats && services.value.nats.details) {
-      services.value.nats.details.subjects = data
-    }
-  })
-
-  socket.on('nats-subject-update', (update) => {
-    console.log('NATS subject update:', update)
-    if (services.value.nats && services.value.nats.details && services.value.nats.details.subjects) {
-      services.value.nats.details.subjects[update.subject] = update.data
-    }
-  })
-
-  // Initial load
-  loadServices()
+  // Provide socket to all child components
+  provide('socketsStore', socketsStore)
+  provide('services', services)
 })
 
 onUnmounted(() => {
-  if (socket) {
-    socket.disconnect()
+  // Clean up socket listeners
+  if (socketsStore.mainSocket) {
+    socketsStore.mainSocket.off('services-update')
   }
 })
 
-async function loadServices() {
-  loading.value = true
-  try {
-    await store.fetchServices()
-    services.value = store.services
-  } catch (error) {
-    console.error('Failed to load services:', error)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function toggleService(serviceId, currentStatus) {
-  const action = currentStatus === 'online' ? 'stop' : 'start'
-  loading.value = true
-  
-  try {
-    await store.controlService(serviceId, action)
-    // The socket will receive the update
-  } catch (error) {
-    console.error(`Failed to ${action} service:`, error)
-  } finally {
-    loading.value = false
-  }
-}
-
-function refreshAll() {
-  if (socket) {
-    socket.emit('refresh')
-  }
-  loadServices()
-}
 </script>
 
-<style lang="scss" scoped>
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  color: #f1f5f9;
+  min-height: 100vh;
+}
+
 #app {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-}
-
-.app-header {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  padding: 1.5rem;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+}
+
+.main-nav {
+  background: rgba(15, 23, 42, 0.98);
+  backdrop-filter: blur(10px);
+  padding: 0 2rem;
+  height: 60px;
+  display: flex;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-
-  h1 {
-    margin: 0;
-    font-size: 2rem;
-  }
-
-  .connection-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 20px;
-
-    .status-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      
-      &.connected {
-        background: #4ade80;
-        box-shadow: 0 0 10px #4ade80;
-      }
-      
-      &.disconnected {
-        background: #f87171;
-        box-shadow: 0 0 10px #f87171;
-      }
-    }
-  }
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.3);
 }
 
-.dashboard {
-  padding: 2rem;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.services-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 2rem;
-  margin-bottom: 2rem;
-}
-
-.refresh-section {
-  text-align: center;
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   
-  .refresh-button {
-    background: rgba(255, 255, 255, 0.2);
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    color: white;
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
-    border-radius: 30px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    
-    &:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.3);
-      transform: translateY(-2px);
-    }
-    
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  }
-  
-  .last-update {
-    margin-top: 1rem;
-    opacity: 0.8;
-    font-size: 0.9rem;
-  }
-}
-
-.market-data-section {
-  margin: 3rem 0 2rem 0;
-  
-  .section-title {
+  .logo {
     font-size: 1.5rem;
-    margin-bottom: 1.5rem;
-    text-align: center;
-    opacity: 0.95;
+  }
+  
+  .brand-text {
+    font-size: 1.2rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 }
 
-.historical-data-section {
-  margin: 2rem 0;
+.nav-links {
+  display: flex;
+  gap: 0.5rem;
 }
 
-.backtesting-section {
-  margin: 2rem 0;
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #94a3b8;
+  text-decoration: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  position: relative;
+  
+  .nav-icon {
+    font-size: 1.1rem;
+  }
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+    transform: translateY(-1px);
+  }
+  
+  &.active {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+    
+    &::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 20%;
+      right: 20%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #60a5fa, transparent);
+    }
+  }
 }
 
-.trading-services-section {
-  margin: 2rem 0;
+.nav-status {
+  display: flex;
+  align-items: center;
 }
 
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 20px;
+  font-size: 0.9rem;
+  
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+    
+    &.connected {
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+    }
+    
+    &.disconnected {
+      background: #ef4444;
+      box-shadow: 0 0 10px #ef4444;
+      animation: none;
+    }
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.2));
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
 </style>

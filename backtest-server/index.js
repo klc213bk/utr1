@@ -1,7 +1,10 @@
+const logger = require('./logger');
 const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { createServer } = require('http');
+
+
 require('dotenv').config();
 
 const { initDatabase, initNATS } = require('./config/connections');
@@ -40,7 +43,7 @@ app.post('/api/shutdown', (req, res) => {
   
   // Gracefully close connections
   setTimeout(() => {
-    process.exit(0);
+    shutdown();
   }, 1000);
 });
 
@@ -51,6 +54,7 @@ app.use('/api/data', dataRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
+  logger.service.debug('Health check requested');
   res.json({ 
     status: 'ok',
     service: config.name,
@@ -60,9 +64,16 @@ app.get('/health', (req, res) => {
 
 // WebSocket connections
 io.on('connection', (socket) => {
+  logger.service.info('Client connected', {
+    socketId: socket.id,
+    address: socket.handshake.address
+  });
   console.log('Client connected:', socket.id);
   
   socket.on('disconnect', () => {
+    logger.service.info('Client disconnected', {
+      socketId: socket.id
+    });
     console.log('Client disconnected:', socket.id);
   });
 });
@@ -76,6 +87,11 @@ async function start() {
     
     // Start HTTP server
     httpServer.listen(config.port, () => {
+      logger.service.info('Backtest server started', {
+        port: config.port,
+        pid: process.pid,
+        nodeVersion: process.version
+      });
       console.log(`🚀 Backtest Server running on port ${config.port}`);
       console.log(`\n📌 API Endpoints:`);
       console.log(`   Backtest: /api/backtest/*`);
@@ -94,8 +110,17 @@ async function start() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.service.error('Uncaught exception', {
+    error: error.message,
+    stack: error.stack
+  });
+  process.exit(1);
+});
+
 async function shutdown() {
-  console.log('\n🛑 Shutting down gracefully...');
+  logger.service.info('SIGTERM received, shutting down gracefully');
   
   try {
     const { closeDatabase, closeNATS } = require('./config/connections');
@@ -103,7 +128,7 @@ async function shutdown() {
     await closeDatabase();
     
     httpServer.close(() => {
-      console.log('👋 Server closed');
+      logger.service.info('Server closed');
       process.exit(0);
     });
   } catch (error) {

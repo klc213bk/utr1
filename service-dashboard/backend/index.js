@@ -1,3 +1,5 @@
+const { Pool } = require('pg');  // ADD THIS to imports
+
 const express = require('express');
 const cors = require('cors');
 const { createServer } = require('http');
@@ -8,6 +10,8 @@ const { connect } = require('nats');
 const net = require('net');
 const http = require('http');
 const { format, subDays } = require('date-fns');
+const { spawn, exec } = require('child_process');  // Make sure spawn is imported
+const path = require('path');  
 require('dotenv').config();
 
 const app = express();
@@ -42,6 +46,14 @@ const config = {
     connectionString: process.env.POSTGRES_URL || 'postgresql://postgres:postgres@localhost:5432/stocks'
   }
 };
+
+// ADD connection pool
+const pool = new Pool({
+  connectionString: config.postgres.connectionString,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
 // Service states
 let services = {
@@ -1237,6 +1249,80 @@ app.post('/api/historical/cancel', (req, res) => {
   });
 });
 
+// app.get('/api/analytics/backtests', async (req, res) => {
+//   try {
+//     const query = `
+//       SELECT backtest_id, strategy, start_date, end_date, 
+//              total_return, created_at
+//       FROM backtest_results 
+//       ORDER BY created_at DESC 
+//       LIMIT 20
+//     `;
+//     const result = await pool.query(query);
+//     res.json({ backtests: result.rows });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+// app.get('/api/analytics/metrics/:backtestId', async (req, res) => {
+//   try {
+//     const { backtestId } = req.params;
+//     const query = `
+//       SELECT * FROM backtest_results 
+//       WHERE backtest_id = $1
+//     `;
+//     const result = await pool.query(query, [backtestId]);
+    
+//     if (result.rows.length > 0) {
+//       const metrics = result.rows[0];
+//       res.json({
+//         totalReturn: parseFloat(metrics.total_return),
+//         winRate: parseFloat(metrics.win_rate),
+//         totalTrades: metrics.total_trades,
+//         maxDrawdown: parseFloat(metrics.max_drawdown),
+//         totalPnL: parseFloat(metrics.total_pnl)
+//       });
+//     } else {
+//       res.status(404).json({ error: 'Backtest not found' });
+//     }
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+// app.get('/api/analytics/trades/:backtestId', async (req, res) => {
+//   try {
+//     const { backtestId } = req.params;
+//     const query = `
+//       SELECT * FROM backtest_trades 
+//       WHERE backtest_id = $1 
+//       ORDER BY timestamp DESC 
+//       LIMIT 100
+//     `;
+//     const result = await pool.query(query, [backtestId]);
+//     res.json({ trades: result.rows });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
+// app.get('/api/analytics/equity/:backtestId', async (req, res) => {
+//   try {
+//     const { backtestId } = req.params;
+//     const query = `
+//       SELECT timestamp, equity_value as value 
+//       FROM backtest_equity_curve 
+//       WHERE backtest_id = $1 
+//       ORDER BY timestamp
+//     `;
+//     const result = await pool.query(query, [backtestId]);
+//     res.json({ equityCurve: result.rows });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -1622,9 +1708,6 @@ function setupSimpleMonitoring() {
 // Backtest Services Management
 // ============================================================================
 
-const { spawn, exec } = require('child_process');
-const path = require('path');
-
 // Track service processes
 let serviceProcesses = {
   'strategy-engine': null
@@ -1709,14 +1792,16 @@ app.post('/api/trading-services/:serviceId/start', async (req, res) => {
 
 // Helper: Start a service
 async function startService(serviceId) {
-  console.log(`startService is called`);
+  console.log(`startService is called for: ${serviceId}`);
   console.log(`Checking if ${serviceId} is already running...`);
 
   // Check if already running via health endpoint
   const healthEndpoints = {
     'backtest-server': 'http://localhost:8083/health',
     'strategy-engine': 'http://localhost:8084/health',
-    'execution-simulator': 'http://localhost:8085/health'
+    'execution-simulator': 'http://localhost:8085/health',
+    'performance-tracker': 'http://localhost:8086/health',
+    'analytics-server': 'http://localhost:8087/health'
   };
   try {
     const response = await axios.get(healthEndpoints[serviceId], { timeout: 1000 });
@@ -1752,14 +1837,16 @@ async function startService(serviceId) {
         args = ['main.py'];
         cwd = path.join(__dirname, '../../execution-simulator');
         break;
-
-      // Future services
-      // case 'executor':
-      //   command = 'python';
-      //   args = ['main.py'];
-      //   cwd = path.join(__dirname, '../../executor');
-      //   break;
-      
+      case 'performance-tracker':
+        command = 'node';
+        args = ['index.js'];
+        cwd = path.join(__dirname, '../../performance-tracker');
+        break;
+      case 'analytics-server':  // Add this case
+        command = 'node';
+        args = ['index.js'];
+        cwd = path.join(__dirname, '../../analytics-server');
+        break;  
       default:
         throw new Error(`Unknown service: ${serviceId}`);
     }
@@ -1770,13 +1857,16 @@ async function startService(serviceId) {
     const serviceConfigs = {
       'backtest-server': { port: 8083 },
       'strategy-engine': { port: 8084 },
-      'execution-simulator': { port: 8085 }
+      'execution-simulator': { port: 8085 },
+      'performance-tracker': { port: 8086 },
+      'analytics-server': { port: 8087 }
     };
 
     const childProcess = spawn(command, args, {
       cwd,
       detached: false,
       stdio: 'pipe',
+      shell: true,
       env: {
         ...process.env,
         PORT: serviceConfigs[serviceId]?.port || process.env.PORT
@@ -1837,7 +1927,9 @@ async function stopService(serviceId) {
   const shutdownEndpoints = {
     'backtest-server': 'http://localhost:8083/api/shutdown',
     'strategy-engine': 'http://localhost:8084/api/shutdown',
-    'execution-simulator': 'http://localhost:8085/api/shutdown'
+    'execution-simulator': 'http://localhost:8085/api/shutdown',
+    'performance-tracker': 'http://localhost:8086/api/shutdown',
+    'analytics-server': 'http://localhost:8087/api/shutdown'
   };
   
   // Check if we're managing this process
@@ -1917,7 +2009,9 @@ async function stopService(serviceId) {
     const healthEndpoints = {
       'backtest-server': 'http://localhost:8083/health',
       'strategy-engine': 'http://localhost:8084/health',  
-      'execution-simulator': 'http://localhost:8085/health'
+      'execution-simulator': 'http://localhost:8085/health',
+      'performance-tracker': 'http://localhost:8086/health',
+      'analytics-server': 'http://localhost:8087/health'
     };
     
     let isRunning = false;
