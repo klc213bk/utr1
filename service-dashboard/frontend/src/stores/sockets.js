@@ -83,6 +83,8 @@ export const useSocketsStore = defineStore('sockets', {
       // Set up persistent listeners for backtest events
       this.backtestSocket.on('backtest-progress', (data) => {
         // Emit to any registered listeners
+        console.log('Frontend sockets receive backtest-progress event')
+        
         this.emit('backtest-progress', data)
       })
 

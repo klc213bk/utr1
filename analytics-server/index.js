@@ -29,7 +29,7 @@ app.get('/api/:mode/sessions', async (req, res) => {
   const { mode } = req.params;
   
   const tableMap = {
-    'backtest': 'backtest_results',
+    'backtest': 'backtest_metrics',
     'paper': 'paper_trading_results', 
     'live': 'live_trading_results'
   };
@@ -57,7 +57,7 @@ app.get('/api/:mode/metrics/:sessionId', async (req, res) => {
   const { mode, sessionId } = req.params;
   
   const tableMap = {
-    'backtest': { table: 'backtest_results', idColumn: 'backtest_id' },
+    'backtest': { table: 'backtest_metrics', idColumn: 'backtest_id' },
     'paper': { table: 'paper_trading_results', idColumn: 'paper_id' },
     'live': { table: 'live_trading_results', idColumn: 'live_id' }
   };
@@ -132,7 +132,7 @@ app.get('/api/analytics', async (req, res) => {
     const query = `
       SELECT backtest_id, strategy, start_date, end_date, 
              total_return, created_at
-      FROM backtest_results 
+      FROM backtest_metrics 
       ORDER BY created_at DESC 
       LIMIT 20
     `;
@@ -149,7 +149,7 @@ app.get('/api/metrics/:backtestId', async (req, res) => {
   try {
     const { backtestId } = req.params;
     const query = `
-      SELECT * FROM backtest_results 
+      SELECT * FROM backtest_metrics 
       WHERE backtest_id = $1
     `;
     const result = await pool.query(query, [backtestId]);

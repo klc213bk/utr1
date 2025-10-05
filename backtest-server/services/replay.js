@@ -23,7 +23,7 @@ let replayState = {
 };
 
 // Start replay
-async function startReplay({ startDate, endDate, speed = 1 }) {
+async function startReplay({ startDate, endDate, speed = 1, backtestId = null }) {
   logger.business.info('Starting data replay', {
     backtestId,
     startDate,
@@ -50,7 +50,8 @@ async function startReplay({ startDate, endDate, speed = 1 }) {
     speed,
     startedAt: new Date(),
     completedAt: null,
-    error: null
+    error: null,
+    backtestId: backtestId
   };
   
   // Start replay in background
@@ -64,6 +65,7 @@ async function startReplay({ startDate, endDate, speed = 1 }) {
     startDate,
     endDate,
     speed,
+    backtestId,
     sessionId: logger.currentSessionId
   });
 
@@ -77,14 +79,27 @@ async function replayBars(startDate, endDate, speed) {
   const client = await pgPool.connect();
   
   try {
+    const date1 = new Date(startDate);  // treated as UTC midnight if no timezone given
+    const utc1String = date1.toISOString();
+    
+    const date2 = new Date(endDate);  // treated as UTC midnight if no timezone given
+    date2.setDate(date2.getDate() +1)
+    const utc2String = date2.toISOString();
+
     // Get total count for progress
+    // const countQuery = `
+    //   SELECT COUNT(*) as count 
+    //   FROM spy_bars_1min 
+    //   WHERE time >= $1::date AND time < ($2::date + interval '1 day')
+    // `;
     const countQuery = `
       SELECT COUNT(*) as count 
       FROM spy_bars_1min 
-      WHERE time >= $1::date AND time < ($2::date + interval '1 day')
+      WHERE time >= $1 AND time < $2
     `;
-    
-    const countResult = await client.query(countQuery, [startDate, endDate]);
+    console.log(`🚀 utc1String: ${utc1String}, utc2String: ${utc2String}`)
+
+    const countResult = await client.query(countQuery, [utc1String, utc2String]);
     replayState.totalBars = parseInt(countResult.rows[0].count);
     
     console.log(`📊 Found ${replayState.totalBars} bars to replay`);
@@ -98,11 +113,11 @@ async function replayBars(startDate, endDate, speed) {
     const query = `
       SELECT time, open, high, low, close, volume, vwap, count
       FROM spy_bars_1min 
-      WHERE time >= $1::date AND time < ($2::date + interval '1 day')
+      WHERE time >= $1 AND time < $2
       ORDER BY time
     `;
     
-    const cursor = client.query(new Cursor(query, [startDate, endDate]));
+    const cursor = client.query(new Cursor(query, [utc1String, utc2String]));
     const batchSize = 100;
 
   // Calculate delay between bars based on speed
@@ -171,6 +186,7 @@ async function replayBars(startDate, endDate, speed) {
           count: parseInt(bar.count || 0),
           replay: true,
           replaySpeed: speed,
+          backtestId: replayState.backtestId,
           progress: ((replayState.barsPublished + 1) / replayState.totalBars) * 100
         };
 
@@ -191,13 +207,14 @@ async function replayBars(startDate, endDate, speed) {
           if (replayState.barsPublished % 10 === 0 || replayState.barsPublished === replayState.totalBars) {
             const io = getIO();
             if (io) {
-              io.emit('replay-progress', {
-                barsPublished: replayState.barsPublished,
-                totalBars: replayState.totalBars,
-                progress: replayState.progress,
-                currentTime: replayState.currentTime,
-                barsPerSecond: speed === 0 ? 'Max' : (speed / 60).toFixed(2)
-              });
+              // io.emit('replay-progress', {
+              //   backtestId: replayState.backtestId,
+              //   barsPublished: replayState.barsPublished,
+              //   totalBars: replayState.totalBars,
+              //   progress: replayState.progress,
+              //   currentTime: replayState.currentTime,
+              //   barsPerSecond: speed === 0 ? 'Max' : (speed / 60).toFixed(2)
+              // });
             }
           }
 
@@ -208,6 +225,7 @@ async function replayBars(startDate, endDate, speed) {
             console.log(`📈 Progress: ${replayState.barsPublished}/${replayState.totalBars} bars (${replayState.progress.toFixed(1)}%)`);
             console.log(`   Actual rate: ${actualBarsPerSecond.toFixed(2)} bars/sec`);
             logger.business.debug('Replay progress', {
+              backtestId: replayState.backtestId,
               barsPublished: replayState.barsPublished,
               totalBars: replayState.totalBars,
               progress: replayState.progress.toFixed(1),
@@ -217,6 +235,7 @@ async function replayBars(startDate, endDate, speed) {
         } catch (error) {
           console.error('Failed to publish bar:', error);
           logger.business.error('Replay error', {
+            backtestId: replayState.backtestId,
             error: error.message,
             stack: error.stack,
             barsPublished: replayState.barsPublished,

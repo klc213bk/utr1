@@ -15,6 +15,17 @@
           <span class="nav-icon">📈</span>
           <span>Analytics</span>
         </router-link>
+        <a 
+          href="/monitor" 
+          target="_blank"
+          class="nav-link monitor-link"
+          title="Open NATS Monitor in new tab"
+        >
+          <span>Monitor</span>
+          <svg class="external-icon" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M10 10H2V2h3V0H2C.9 0 0 .9 0 2v8c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7h-2v3zM7 0v2h1.59L4.29 6.29l1.42 1.42L10 3.41V5h2V0H7z"/>
+          </svg>
+        </a>
       </div>
       <div class="nav-status">
         <div class="connection-status">
@@ -236,5 +247,32 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.nav-link.monitor-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  position: relative;
+  background: rgba(147, 197, 253, 0.05);
+  border: 1px solid rgba(147, 197, 253, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.nav-link.monitor-link:hover {
+  background: rgba(147, 197, 253, 0.15);
+  border-color: rgba(147, 197, 253, 0.4);
+  box-shadow: 0 0 10px rgba(147, 197, 253, 0.2);
+}
+
+.external-icon {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.nav-link.monitor-link:hover .external-icon {
+  opacity: 1;
 }
 </style>
