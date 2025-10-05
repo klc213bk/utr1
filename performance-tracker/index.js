@@ -241,7 +241,7 @@ class PerformanceTracker {
   
   async saveResults(tracker) {
     const query = `
-      INSERT INTO backtest_results 
+      INSERT INTO backtest_metrics 
       (backtest_id, strategy, start_date, end_date, total_return, 
        win_rate, total_trades, max_drawdown, total_pnl)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

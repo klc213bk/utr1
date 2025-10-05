@@ -1,6 +1,8 @@
 const logger = require('../logger');
 const { getNATS } = require('../config/connections');
 const axios = require('axios');
+const { getDatabase } = require('../config/connections');
+
 
 function getIO() {
   return require('../index').io;
@@ -41,6 +43,46 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
   // Generate backtest ID
   const backtestId = `bt_${Date.now()}`;
   logger.setSessionId(backtestId);
+
+  // Insert into database
+  const pgPool = getDatabase();
+  try {
+    const insertQuery = `
+      INSERT INTO backtest_sessions 
+      (backtest_id, strategy_name, strategy_version, strategy_params, 
+      start_date, end_date, initial_capital, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')
+    `;
+    
+    const strategyParams = {
+      symbol: symbol,
+      speed: speed,
+      // Add strategy-specific params based on strategy type
+      ...(strategy === 'ma_cross' && { short_period: 20, long_period: 50 }),
+      ...(strategy === 'rsi' && { period: 14, oversold: 30, overbought: 70 })
+    };
+
+    await pgPool.query(insertQuery, [
+      backtestId,
+      strategy,
+      '1.0.0', // You might want to make this configurable
+      JSON.stringify(strategyParams),
+      startDate,
+      endDate,
+      100000.00 // Default initial capital
+    ]);
+    
+   logger.business.info('Backtest session recorded in database', { backtestId });
+
+  } catch (dbError) {
+    logger.business.error('Failed to insert backtest session', { 
+      error: dbError.message,
+      backtestId 
+    });
+    // Decide whether to continue or abort on DB failure
+    throw new Error('Failed to record backtest session: ' + dbError.message);
+  }
+
   logger.business.info('Backtest initialized', {
     backtestId,
     startDate,
@@ -150,6 +192,22 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
       backtestState.currentBacktest.status = 'failed';
       backtestState.currentBacktest.error = error.message;
       
+      // Update database status to failed
+      const pgPool = getDatabase();
+      try {
+        await pgPool.query(
+          `UPDATE backtest_sessions 
+          SET status = 'failed', completed_at = CURRENT_TIMESTAMP 
+          WHERE backtest_id = $1`,
+          [backtestId]
+        );
+      } catch (dbError) {
+        logger.business.error('Failed to update backtest failure status', { 
+          error: dbError.message,
+          backtestId 
+        });
+      }
+
       // PUBLISH ERROR TO NATS
       const natsConnection = getNATS();
       natsConnection.publish('backtest-error', JSON.stringify({
@@ -238,6 +296,21 @@ async function executeBacktest(backtestId) {
     completedAt: new Date().toISOString()
   };
   
+  const pgPool = getDatabase();
+  try {
+    await pgPool.query(
+      `UPDATE backtest_sessions 
+      SET status = 'completed', completed_at = CURRENT_TIMESTAMP 
+      WHERE backtest_id = $1`,
+      [backtestId]
+    );
+  } catch (dbError) {
+    logger.business.error('Failed to update backtest completion', { 
+      error: dbError.message,
+      backtestId 
+    });
+  }
+
   // PUBLISH COMPLETION TO NATS
   natsConnection.publish('backtest-complete', JSON.stringify({
     backtestId,
@@ -269,7 +342,7 @@ async function waitForReplayCompletion() {
 }
 
 // Stop running backtest
-function stopBacktest() {
+async function stopBacktest() {
   console.log(`📊 stopBacktest is called!!!`)
   if (!backtestState.isRunning) {
     throw new Error('No backtest is running');
@@ -297,10 +370,49 @@ function stopBacktest() {
   if (backtestState.currentBacktest) {
     backtestState.currentBacktest.status = 'stopped';
     backtestState.currentBacktest.stoppedAt = new Date().toISOString();
+  
+    // Update database status to cancelled
+    const pgPool = getDatabase();
+    try {
+      await pgPool.query(
+        `UPDATE backtest_sessions 
+        SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP 
+        WHERE backtest_id = $1`,
+        [backtestId]
+      );
+    } catch (dbError) {
+      console.error('Failed to update backtest cancellation status:', dbError);
+    }
   }
   
   return { success: true, message: 'Backtest stopped' };
 }
+
+async function getBacktestHistoryFromDB(limit = 20) {
+  const pgPool = getDatabase();
+  try {
+    const result = await pgPool.query(
+      `SELECT * FROM backtest_sessions 
+       ORDER BY created_at DESC 
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows;
+  } catch (error) {
+    logger.business.error('Failed to fetch backtest history', { 
+      error: error.message 
+    });
+    return [];
+  }
+}
+
+module.exports = {
+  runBacktest,
+  stopBacktest,
+  getBacktestStatus,
+  getBacktestHistory,
+  getBacktestHistoryFromDB  // Add this export
+};
 
 // Get backtest status
 function getBacktestStatus() {

@@ -224,6 +224,69 @@ onMounted(() => {
     setupSocketListeners()
   }
 
+  // Define callbacks as named functions so we can properly clean them up
+  const handleBacktestProgress = (data) => {
+    console.log('BacktestingPanel received backtest-progress:', data)
+    progress.value = Math.round(data.progress || 0)
+    progressMessage.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
+    
+    if (data.currentTime) {
+      const utcDate = new Date(data.currentTime)
+      const estString = utcDate.toLocaleString("en-US", {
+        timeZone: "America/New_York"
+      });
+      currentReplayTime.value = estString
+      //currentReplayTime.value = new Date(data.currentTime).toLocaleTimeString()
+    }
+  }
+
+  const handleBacktestComplete = (data) => {
+    console.log('BacktestingPanel received backtest-complete:', data)
+    lastCompletedBacktest.value = data
+    progress.value = 100
+    progressMessage.value = ''
+    isRunning.value = false
+    
+    if (data.results) {
+      message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
+    } else {
+      message.value = 'Backtest completed successfully!'
+    }
+    
+    messageType.value = 'success'
+  }
+
+  const handleBacktestError = (data) => {
+    console.log('BacktestingPanel received backtest-error:', data)
+    isRunning.value = false
+    progress.value = 0
+    progressMessage.value = ''
+    message.value = data.error || 'Backtest failed'
+    messageType.value = 'error'
+  }
+
+  // Setup backtest socket listeners using the store's event system
+  if (socketsStore) {
+    // Make sure backtest socket is initialized
+    if (!socketsStore.isBacktestConnected) {
+      console.log('Initializing backtest socket from BacktestingPanel')
+      socketsStore.initBacktestSocket()
+    }
+    
+    // Register listeners with the store
+    socketsStore.on('backtest-progress', handleBacktestProgress)
+    socketsStore.on('backtest-complete', handleBacktestComplete)
+    socketsStore.on('backtest-error', handleBacktestError)
+    
+    // Store callbacks for cleanup
+    window._backtestCallbacks = {
+      progress: handleBacktestProgress,
+      complete: handleBacktestComplete,
+      error: handleBacktestError
+    }
+  }
+
+
   // Watch for backtest socket availability
   const checkBacktestSocket = () => {
     if (backtestSocket.value && !backtestSocket.value.hasListeners('backtest-progress')) {
@@ -420,12 +483,12 @@ function setupSocketListeners() {
     }
   })
 
-  props.socket.on('replay-progress', (data) => {
-    if (data.barsPublished && data.totalBars) {
-      progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
-      progressMessage.value = `Replaying: ${data.barsPublished}/${data.totalBars} bars`
-    }
-  })
+  // props.socket.on('replay-progress', (data) => {
+  //   if (data.barsPublished && data.totalBars) {
+  //     progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
+  //     progressMessage.value = `Replaying: ${data.barsPublished}/${data.totalBars} bars`
+  //   }
+  // })
 
   
   props.socket.on('backtest-complete', (data) => {
@@ -458,6 +521,14 @@ onUnmounted(() => {
     props.socket.off('backtest-progress')
     props.socket.off('backtest-complete')
     props.socket.off('backtest-error')
+  }
+
+  // Clean up store event listeners with the actual callbacks
+  if (socketsStore && window._backtestCallbacks) {
+    socketsStore.off('backtest-progress', window._backtestCallbacks.progress)
+    socketsStore.off('backtest-complete', window._backtestCallbacks.complete)
+    socketsStore.off('backtest-error', window._backtestCallbacks.error)
+    delete window._backtestCallbacks
   }
 })
 </script>
