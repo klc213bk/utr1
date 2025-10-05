@@ -80,6 +80,10 @@ let services = {
   }
 };
 
+// Track interval for cleanup
+let checkInterval = null;
+
+
 // ADD to existing state objects
 let ibSubscriptions = {
   // Will track all active IB market data subscriptions
@@ -1678,7 +1682,7 @@ app.get('/api/historical/presets', (req, res) => {
 });
 
 // Start periodic health checks
-setInterval(checkAllServices, 10000); // Check every 10 seconds
+checkInterval = setInterval(checkAllServices, 10000); // Check every 10 seconds
 
 // Update historical stats every 5 minutes
 setInterval(async () => {
@@ -2121,19 +2125,80 @@ app.get('/api/trading-services/health', async (req, res) => {
 
 // Clean up on server shutdown
 process.on('SIGTERM', () => {
-  console.log('Shutting down, stopping all services...');
-  for (const serviceId in serviceProcesses) {
-    stopService(serviceId);
-  }
+  console.log('SIGTERM received, shutting down gracefully...');
+  shutdown();
 });
 
 process.on('SIGINT', () => {
-  console.log('Shutting down, stopping all services...');
-  for (const serviceId in serviceProcesses) {
-    stopService(serviceId);
-  }
+  console.log('\nSIGINT received, shutting down gracefully...');
+  shutdown();
 });
 
+// Clean up on server shutdown - simplified version
+process.on('beforeExit', () => {
+  console.log('Process about to exit, cleaning up...');
+});
+
+async function shutdown() {
+  console.log('Starting graceful shutdown...');
+  
+  // Set a hard timeout for shutdown
+  const shutdownTimeout = setTimeout(() => {
+    console.log('Shutdown timeout reached, forcing exit...');
+    process.exit(0);
+  }, 5000); // 5 second timeout
+  
+  try {
+    // Stop checking services
+    if (checkInterval) {
+      clearInterval(checkInterval);
+      checkInterval = null;
+    }
+    
+    // Don't try to stop services on shutdown - just cleanup our own resources
+    console.log('Stopping managed services...');
+    
+    // Stop only processes we directly manage (not independent services)
+    for (const serviceId in serviceProcesses) {
+      const proc = serviceProcesses[serviceId];
+      if (proc && proc.pid) {
+        try {
+          console.log(`Stopping managed process: ${serviceId} (PID: ${proc.pid})`);
+          proc.kill('SIGTERM');
+          // Don't wait for confirmation, just continue
+        } catch (error) {
+          console.log(`Could not stop ${serviceId}: ${error.message}`);
+        }
+      }
+    }
+    
+    // Close database pool
+    if (pool) {
+      console.log('Closing database connection pool...');
+      await pool.end().catch(err => console.log('Error closing pool:', err.message));
+    }
+    
+    // Close HTTP server
+    console.log('Closing HTTP server...');
+    httpServer.close(() => {
+      clearTimeout(shutdownTimeout);
+      console.log('Server closed successfully');
+      process.exit(0);
+    });
+    
+    // Force exit after a short delay if server doesn't close
+    setTimeout(() => {
+      clearTimeout(shutdownTimeout);
+      console.log('Forcing exit...');
+      process.exit(0);
+    }, 2000);
+    
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    clearTimeout(shutdownTimeout);
+    process.exit(1);
+  }
+}
 
 // ============================================================================
 // Backtesting API Endpoints
