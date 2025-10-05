@@ -2264,91 +2264,180 @@ app.get('/api/backtest/history', (req, res) => {
 });
 
 // ============================================================================
-// Backtest Simulation (Temporary - will be replaced by actual backtest engine)
+// NATS Monitor API
 // ============================================================================
 
-/*
-async function simulateBacktest(backtestId, startDate, endDate) {
+// State for NATS monitoring
+let monitorState = {
+  messages: [],        // Circular buffer of recent messages
+  subjects: {},        // Subject statistics
+  totalMessages: 0,
+  startTime: Date.now(),
+  maxBufferSize: 200   // Keep last 200 messages
+};
+
+// Subscribe to NATS for monitoring (add this to your startup)
+async function setupNATSMonitor() {
   try {
-    console.log(`Simulating backtest ${backtestId} from ${startDate} to ${endDate}`);
-    
-    // Calculate total days
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-    
-    // Simulate progress updates
-    for (let i = 1; i <= 10; i++) {
-      if (!backtestState.isRunning) break;
-      
-      await sleep(1000); // 1 second per 10% progress
-      
-      const progress = i * 10;
-      backtestState.currentBacktest.progress = progress;
-      
-      // Emit progress update
-      io.emit('backtest-progress', {
-        backtestId,
-        progress,
-        message: `Processing day ${Math.floor(totalDays * progress / 100)} of ${totalDays}`
-      });
-    }
-    
-    // Simulate completion
-    if (backtestState.isRunning) {
-      // Generate mock results
-      const results = {
-        backtestId,
-        startDate,
-        endDate,
-        totalReturn: (Math.random() * 30 - 10).toFixed(2), // -10% to +20%
-        sharpe: (Math.random() * 2).toFixed(2), // 0 to 2
-        maxDrawdown: (Math.random() * 20).toFixed(2), // 0% to 20%
-        winRate: (Math.random() * 40 + 40).toFixed(1), // 40% to 80%
-        totalTrades: Math.floor(Math.random() * 100 + 10),
-        completedAt: new Date().toISOString()
-      };
-      
-      // Update state
-      backtestState.isRunning = false;
-      backtestState.currentBacktest = {
-        ...backtestState.currentBacktest,
-        status: 'completed',
-        completedAt: results.completedAt,
-        results
-      };
-      backtestState.lastResults = results;
-      
-      // Add to history
-      backtestState.recentBacktests.unshift(backtestState.currentBacktest);
-      if (backtestState.recentBacktests.length > 20) {
-        backtestState.recentBacktests.pop();
-      }
-      
-      // Notify clients
-      io.emit('backtest-completed', results);
-      
-      console.log(`Backtest ${backtestId} completed with results:`, results);
-    }
-    
-  } catch (error) {
-    console.error('Backtest simulation error:', error);
-    
-    // Update state
-    backtestState.isRunning = false;
-    if (backtestState.currentBacktest) {
-      backtestState.currentBacktest.status = 'failed';
-      backtestState.currentBacktest.error = error.message;
-    }
-    
-    // Notify clients
-    io.emit('backtest-error', {
-      backtestId,
-      error: error.message
+    const nc = await connect({
+      servers: config.nats.url,
+      name: 'dashboard-monitor'
     });
+    
+    // Subscribe to all messages with wildcard
+    const sub = nc.subscribe('>');
+    
+    (async () => {
+      for await (const msg of sub) {
+        processMonitorMessage(msg);
+      }
+    })();
+    
+    console.log('NATS monitor subscription setup complete');
+  } catch (err) {
+    console.error('Failed to setup NATS monitor:', err);
   }
 }
-*/
+
+// Process incoming NATS messages for monitoring
+function processMonitorMessage(msg) {
+  const now = Date.now();
+  const subject = msg.subject;
+  
+  // Create message object
+  const monitorMsg = {
+    timestamp: now,
+    subject: subject,
+    payload: msg.data ? JSON.parse(msg.data.toString()) : null,
+    size: msg.data ? msg.data.length : 0
+  };
+  
+  // Add to buffer (circular)
+  monitorState.messages.push(monitorMsg);
+  if (monitorState.messages.length > monitorState.maxBufferSize) {
+    monitorState.messages.shift(); // Remove oldest
+  }
+
+  // Update subject statistics
+  if (!monitorState.subjects[subject]) {
+    monitorState.subjects[subject] = {
+      total: 0,
+      lastSeen: now,
+      firstSeen: now
+    };
+  }
+  
+  monitorState.subjects[subject].total++;
+  monitorState.subjects[subject].lastSeen = now;
+  
+  // Update total count
+  monitorState.totalMessages++;
+}
+
+// API endpoint for monitor polling
+app.get('/api/monitor/poll', (req, res) => {
+  const { since, subject: subjectFilter } = req.query;
+  const sinceTime = parseInt(since) || (Date.now() - 60000); // Default to last minute
+  
+  // Filter messages
+  let filteredMessages = monitorState.messages;
+  
+  if (sinceTime) {
+    filteredMessages = filteredMessages.filter(m => m.timestamp > sinceTime);
+  }
+  
+  if (subjectFilter) {
+    // Support wildcard patterns
+    const pattern = subjectFilter.replace(/\*/g, '.*').replace(/>/g, '.*');
+    const regex = new RegExp('^' + pattern);
+    filteredMessages = filteredMessages.filter(m => regex.test(m.subject));
+  }
+  
+  // Calculate subject counts (new messages since last poll)
+  const subjectCounts = {};
+  const currentTime = Date.now();
+  
+  // Count all messages for subjects seen in this response
+  const uniqueSubjects = [...new Set(filteredMessages.map(m => m.subject))];
+  uniqueSubjects.forEach(subject => {
+    const total = monitorState.subjects[subject]?.total || 0;
+    const newCount = filteredMessages.filter(m => m.subject === subject).length;
+    
+    subjectCounts[subject] = {
+      new: newCount,
+      total: total
+    };
+  });
+  
+  // Add subjects with no new messages but have totals
+  Object.entries(monitorState.subjects).forEach(([subject, stats]) => {
+    if (!subjectCounts[subject] && stats.total > 0) {
+      // Check if subject matches filter
+      if (subjectFilter) {
+        const pattern = subjectFilter.replace(/\*/g, '.*').replace(/>/g, '.*');
+        const regex = new RegExp('^' + pattern);
+        if (!regex.test(subject)) return;
+      }
+      
+      subjectCounts[subject] = {
+        new: 0,
+        total: stats.total
+      };
+    }
+  });
+  
+  // Calculate current message rate
+  const timeWindow = 5000; // 5 second window
+  const recentMessages = monitorState.messages.filter(m => 
+    m.timestamp > currentTime - timeWindow
+  );
+  const rate = Math.round((recentMessages.length / timeWindow) * 1000); // messages per second
+  
+  res.json({
+    messages: filteredMessages,
+    subjects: subjectCounts,
+    timestamp: currentTime,
+    totalMessages: monitorState.totalMessages,
+    rate: rate,
+    count: filteredMessages.length
+  });
+});
+
+// Clear monitor state endpoint
+app.post('/api/monitor/clear', (req, res) => {
+  const { type } = req.body;
+  
+  if (type === 'messages') {
+    monitorState.messages = [];
+  } else if (type === 'counts') {
+    monitorState.subjects = {};
+    monitorState.totalMessages = 0;
+  } else {
+    // Clear everything
+    monitorState.messages = [];
+    monitorState.subjects = {};
+    monitorState.totalMessages = 0;
+  }
+  
+  res.json({ success: true });
+});
+
+// Get monitor stats endpoint
+app.get('/api/monitor/stats', (req, res) => {
+  const stats = {
+    totalMessages: monitorState.totalMessages,
+    bufferedMessages: monitorState.messages.length,
+    activeSubjects: Object.keys(monitorState.subjects).length,
+    uptime: Date.now() - monitorState.startTime,
+    subjects: monitorState.subjects
+  };
+  
+  res.json(stats);
+});
+
+// Call this after NATS is initialized
+// Add to your startup sequence after checkAllServices()
+setupNATSMonitor();
 
 // Start server
 const PORT = process.env.PORT || 3000;

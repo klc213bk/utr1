@@ -15,6 +15,10 @@
           <span class="nav-icon">📈</span>
           <span>Analytics</span>
         </router-link>
+        <router-link to="/monitor" class="nav-link" :class="{ active: $route.path === '/monitor' }">
+          <span class="nav-icon">📡</span>
+          <span>Monitor</span>
+        </router-link>
       </div>
       <div class="nav-status">
         <div class="connection-status">

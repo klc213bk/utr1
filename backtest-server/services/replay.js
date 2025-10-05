@@ -23,7 +23,7 @@ let replayState = {
 };
 
 // Start replay
-async function startReplay({ startDate, endDate, speed = 1 }) {
+async function startReplay({ startDate, endDate, speed = 1, backtestId = null }) {
   logger.business.info('Starting data replay', {
     backtestId,
     startDate,
@@ -50,7 +50,8 @@ async function startReplay({ startDate, endDate, speed = 1 }) {
     speed,
     startedAt: new Date(),
     completedAt: null,
-    error: null
+    error: null,
+    backtestId: backtestId
   };
   
   // Start replay in background
@@ -64,6 +65,7 @@ async function startReplay({ startDate, endDate, speed = 1 }) {
     startDate,
     endDate,
     speed,
+    backtestId,
     sessionId: logger.currentSessionId
   });
 
@@ -171,6 +173,7 @@ async function replayBars(startDate, endDate, speed) {
           count: parseInt(bar.count || 0),
           replay: true,
           replaySpeed: speed,
+          backtestId: replayState.backtestId,
           progress: ((replayState.barsPublished + 1) / replayState.totalBars) * 100
         };
 
@@ -192,6 +195,7 @@ async function replayBars(startDate, endDate, speed) {
             const io = getIO();
             if (io) {
               io.emit('replay-progress', {
+                backtestId: replayState.backtestId,
                 barsPublished: replayState.barsPublished,
                 totalBars: replayState.totalBars,
                 progress: replayState.progress,
@@ -208,6 +212,7 @@ async function replayBars(startDate, endDate, speed) {
             console.log(`📈 Progress: ${replayState.barsPublished}/${replayState.totalBars} bars (${replayState.progress.toFixed(1)}%)`);
             console.log(`   Actual rate: ${actualBarsPerSecond.toFixed(2)} bars/sec`);
             logger.business.debug('Replay progress', {
+              backtestId: replayState.backtestId,
               barsPublished: replayState.barsPublished,
               totalBars: replayState.totalBars,
               progress: replayState.progress.toFixed(1),
@@ -217,6 +222,7 @@ async function replayBars(startDate, endDate, speed) {
         } catch (error) {
           console.error('Failed to publish bar:', error);
           logger.business.error('Replay error', {
+            backtestId: replayState.backtestId,
             error: error.message,
             stack: error.stack,
             barsPublished: replayState.barsPublished,
