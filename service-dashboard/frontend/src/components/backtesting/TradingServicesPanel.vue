@@ -84,7 +84,7 @@ const tradingMode = ref('idle') // 'idle', 'backtest', 'live'
 const socketsStore = inject('socketsStore')
 console.log('Socket store in TradingServicesPanel:', socketsStore)  // Debug log
 
-// Services configuration - only Strategy Engine for now
+// Services configuration
 const services = ref([
   {
     id: 'backtest-server',
@@ -97,7 +97,7 @@ const services = ref([
     id: 'strategy-engine',
     name: 'Strategy Engine',
     port: 8084,
-    status: 'stopped', // 'running', 'stopped', 'error'
+    status: 'stopped',
     healthEndpoint: 'http://localhost:8084/health'
   },
   {
@@ -108,12 +108,12 @@ const services = ref([
     healthEndpoint: 'http://localhost:8085/health'
   },
   {
-    id: 'performance-tracker',
-    name: 'Performance Tracker',
-    status: 'stopped',
+    id: 'risk-manager',
+    name: 'Risk Manager',
     port: 8086,
+    status: 'stopped',
     healthEndpoint: 'http://localhost:8086/health',
-    description: 'Tracks backtest performance and P&L'
+    description: 'Risk management and signal approval'
   },
   {
     id: 'analytics-server',
@@ -122,6 +122,14 @@ const services = ref([
     port: 8087,
     healthEndpoint: 'http://localhost:8087/health',
     description: 'Serve historical backtest results'
+  },
+  {
+    id: 'portfolio-manager',
+    name: 'Portfolio Manager',
+    status: 'stopped',
+    port: 8088,
+    healthEndpoint: 'http://localhost:8088/health',
+    description: 'Track positions, P&L, and buying power'
   }
 ])
 

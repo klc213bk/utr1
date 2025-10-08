@@ -1730,7 +1730,6 @@ async function startService(serviceId) {
     'backtest-server': 'http://localhost:8083/health',
     'strategy-engine': 'http://localhost:8084/health',
     'execution-simulator': 'http://localhost:8085/health',
-    'performance-tracker': 'http://localhost:8086/health',
     'analytics-server': 'http://localhost:8087/health'
   };
   try {
@@ -1767,11 +1766,6 @@ async function startService(serviceId) {
         args = ['main.py'];
         cwd = path.join(__dirname, '../../execution-simulator');
         break;
-      case 'performance-tracker':
-        command = 'node';
-        args = ['index.js'];
-        cwd = path.join(__dirname, '../../performance-tracker');
-        break;
       case 'analytics-server':  // Add this case
         command = 'node';
         args = ['index.js'];
@@ -1788,7 +1782,6 @@ async function startService(serviceId) {
       'backtest-server': { port: 8083 },
       'strategy-engine': { port: 8084 },
       'execution-simulator': { port: 8085 },
-      'performance-tracker': { port: 8086 },
       'analytics-server': { port: 8087 }
     };
 
@@ -1858,7 +1851,6 @@ async function stopService(serviceId) {
     'backtest-server': 'http://localhost:8083/api/shutdown',
     'strategy-engine': 'http://localhost:8084/api/shutdown',
     'execution-simulator': 'http://localhost:8085/api/shutdown',
-    'performance-tracker': 'http://localhost:8086/api/shutdown',
     'analytics-server': 'http://localhost:8087/api/shutdown'
   };
   
@@ -1940,7 +1932,6 @@ async function stopService(serviceId) {
       'backtest-server': 'http://localhost:8083/health',
       'strategy-engine': 'http://localhost:8084/health',  
       'execution-simulator': 'http://localhost:8085/health',
-      'performance-tracker': 'http://localhost:8086/health',
       'analytics-server': 'http://localhost:8087/health'
     };
     

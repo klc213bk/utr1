@@ -248,7 +248,7 @@ onMounted(() => {
     isRunning.value = false
     
     if (data.results) {
-      message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
+      message.value = `Backtest completed!`
     } else {
       message.value = 'Backtest completed successfully!'
     }
@@ -288,56 +288,57 @@ onMounted(() => {
 
 
   // Watch for backtest socket availability
-  const checkBacktestSocket = () => {
-    if (backtestSocket.value && !backtestSocket.value.hasListeners('backtest-progress')) {
-      backtestSocket.value.on('backtest-progress', (data) => {
-        progress.value = Math.round(data.progress || 0)
-        message.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
-        messageType.value = 'info'
+  // const checkBacktestSocket = () => {
+  //   if (backtestSocket.value && !backtestSocket.value.hasListeners('backtest-progress')) {
+  //     backtestSocket.value.on('backtestSocket backtest-progress', (data) => {
+  //       progress.value = Math.round(data.progress || 0)
+  //       message.value = data.message || `Processing: ${data.barsPublished}/${data.totalBars} bars`
+  //       messageType.value = 'info'
         
-        if (data.currentTime) {
-          console.log('Current replay time:', new Date(data.currentTime).toLocaleTimeString())
-        }
-      })
+  //       if (data.currentTime) {
+  //         console.log('Current replay time:', new Date(data.currentTime).toLocaleTimeString())
+  //       }
+  //     })
       
-      backtestSocket.value.on('replay-progress', (data) => {
-        if (data.barsPublished && data.totalBars) {
-          progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
-        }
-      })
+  //     backtestSocket.value.on('replay-progress', (data) => {
+  //       console.log('backtestSocket replay-progress:', data)
+  //       if (data.barsPublished && data.totalBars) {
+  //         progress.value = Math.round((data.barsPublished / data.totalBars) * 100)
+  //       }
+  //     })
 
-      backtestSocket.value.on('backtest-complete', (data) => {
-        console.log('Backtest completed:', data)
-        lastCompletedBacktest.value = data
-        progress.value = 100
-        progressMessage.value = ''
+  //     backtestSocket.value.on('backtest-complete', (data) => {
+  //       console.log('backtestSocket Backtest completed:', data)
+  //       lastCompletedBacktest.value = data
+  //       progress.value = 100
+  //       progressMessage.value = ''
         
-        if (data.results) {
-          message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
-        } else {
-          message.value = 'Backtest completed successfully!'
-        }
+  //       if (data.results) {
+  //         message.value = `Backtest completed! Return: ${data.results.totalReturn}%, Win Rate: ${data.results.winRate}%`
+  //       } else {
+  //         message.value = 'Backtest completed successfully!'
+  //       }
         
-        messageType.value = 'success'
-        isRunning.value = false
-      })
+  //       messageType.value = 'success'
+  //       isRunning.value = false
+  //     })
       
-      backtestSocket.value.on('backtest-error', (data) => {
-        isRunning.value = false
-        progress.value = 0
-        message.value = data.error || 'Backtest failed'
-        messageType.value = 'error'
-      })
-    }
-  }
+  //     backtestSocket.value.on('backtest-error', (data) => {
+  //       isRunning.value = false
+  //       progress.value = 0
+  //       message.value = data.error || 'Backtest failed'
+  //       messageType.value = 'error'
+  //     })
+  //   }
+  // }
 
   // Check immediately
-  checkBacktestSocket()
+  //checkBacktestSocket()
   
   // Also check periodically in case socket connects later
   const interval = setInterval(() => {
     if (backtestSocket.value) {
-      checkBacktestSocket()
+     // checkBacktestSocket()
       clearInterval(interval)
     }
   }, 1000)
@@ -474,6 +475,7 @@ function setupSocketListeners() {
   if (!props.socket) return
   
   props.socket.on('backtest-progress', (data) => {
+    console.log('props.socket backtest-progress', data);
     progress.value = Math.round(data.progress || 0)
     progressMessage.value = data.message || ''
     backtestProgress.value = data.progress || 0
@@ -492,7 +494,7 @@ function setupSocketListeners() {
 
   
   props.socket.on('backtest-complete', (data) => {
-    console.log('Backtest completed (main socket):', data)
+    console.log('props.socket backtest-completed (main socket):', data)
     lastCompletedBacktest.value = data
     isRunning.value = false
     progress.value = 100

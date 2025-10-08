@@ -14,8 +14,10 @@ const natsConfig = {
   servers: process.env.NATS_URL || 'nats://localhost:4222',
   name: 'backtest-server',
   reconnect: true,
-  maxReconnectAttempts: 10,
-  reconnectTimeWait: 2000
+  maxReconnectAttempts: -1,  // Infinite reconnection attempts
+  reconnectTimeWait: 2000,    // 2 seconds between attempts
+  reconnectJitter: 100,       // Add jitter to prevent thundering herd
+  waitOnFirstConnect: true    // Wait for initial connection before returning
 };
 
 // Connection instances
@@ -57,12 +59,36 @@ async function initNATS() {
   try {
     natsConnection = await connect(natsConfig);
     console.log('✅ Connected to NATS');
-    
-    // Handle NATS events
-    natsConnection.closed().then(() => {
-      console.log('NATS connection closed');
+
+    // Handle NATS lifecycle events
+    (async () => {
+      for await (const status of natsConnection.status()) {
+        switch (status.type) {
+          case 'disconnect':
+            console.warn('⚠️ NATS disconnected');
+            break;
+          case 'reconnect':
+            console.log('🔄 NATS reconnected');
+            break;
+          case 'reconnecting':
+            console.log(`🔄 NATS reconnecting (attempt ${status.data})...`);
+            break;
+          case 'error':
+            console.error('❌ NATS error:', status.data);
+            break;
+        }
+      }
+    })();
+
+    // Handle graceful shutdown
+    natsConnection.closed().then((err) => {
+      if (err) {
+        console.error('NATS connection closed with error:', err.message);
+      } else {
+        console.log('NATS connection closed gracefully');
+      }
     });
-    
+
     return natsConnection;
   } catch (error) {
     console.error('❌ NATS connection failed:', error.message);

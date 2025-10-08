@@ -48,10 +48,10 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
   const pgPool = getDatabase();
   try {
     const insertQuery = `
-      INSERT INTO backtest_sessions 
-      (backtest_id, strategy_name, strategy_version, strategy_params, 
+      INSERT INTO trading_sessions 
+      (backtest_id, session_type, strategy_name, strategy_version, strategy_params, 
       start_date, end_date, initial_capital, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'running')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,'running')
     `;
     
     const strategyParams = {
@@ -64,6 +64,7 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
 
     await pgPool.query(insertQuery, [
       backtestId,
+      'backtest',
       strategy,
       '1.0.0', // You might want to make this configurable
       JSON.stringify(strategyParams),
@@ -288,18 +289,13 @@ async function executeBacktest(backtestId) {
   // For now, return mock results
   const results = {
     backtestId,
-    totalReturn: (Math.random() * 30 - 10).toFixed(2),
-    sharpe: (Math.random() * 2).toFixed(2),
-    maxDrawdown: (Math.random() * 20).toFixed(2),
-    winRate: (Math.random() * 40 + 40).toFixed(1),
-    totalTrades: Math.floor(Math.random() * 100 + 10),
     completedAt: new Date().toISOString()
   };
   
   const pgPool = getDatabase();
   try {
     await pgPool.query(
-      `UPDATE backtest_sessions 
+      `UPDATE trading_sessions 
       SET status = 'completed', completed_at = CURRENT_TIMESTAMP 
       WHERE backtest_id = $1`,
       [backtestId]
@@ -375,7 +371,7 @@ async function stopBacktest() {
     const pgPool = getDatabase();
     try {
       await pgPool.query(
-        `UPDATE backtest_sessions 
+        `UPDATE trading_sessions 
         SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP 
         WHERE backtest_id = $1`,
         [backtestId]
@@ -392,7 +388,7 @@ async function getBacktestHistoryFromDB(limit = 20) {
   const pgPool = getDatabase();
   try {
     const result = await pgPool.query(
-      `SELECT * FROM backtest_sessions 
+      `SELECT * FROM trading_sessions 
        ORDER BY created_at DESC 
        LIMIT $1`,
       [limit]
@@ -427,10 +423,3 @@ function getBacktestStatus() {
 function getBacktestHistory(limit = 10) {
   return backtestState.recentBacktests.slice(0, limit);
 }
-
-module.exports = {
-  runBacktest,
-  stopBacktest,
-  getBacktestStatus,
-  getBacktestHistory
-};
