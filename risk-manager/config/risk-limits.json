@@ -1,0 +1,37 @@
+{
+  "positionLimits": {
+    "maxSharesPerTrade": 1000,
+    "maxDollarValuePerTrade": 50000,
+    "maxPositionShares": 2000,
+    "maxPositionDollars": 100000
+  },
+  "portfolioLimits": {
+    "maxPortfolioExposure": 0.95,
+    "maxSinglePositionPct": 0.20,
+    "reserveCashPct": 0.05,
+    "maxSectorExposure": 0.40
+  },
+  "lossLimits": {
+    "maxDailyLoss": 5000,
+    "maxDailyLossPct": 0.05,
+    "maxDrawdown": 0.10,
+    "maxDrawdownDollars": 10000,
+    "maxConsecutiveLosses": 5,
+    "dailyLossResetTime": "16:00"
+  },
+  "frequencyLimits": {
+    "maxTradesPerDay": 50,
+    "minTimeBetweenTrades": 60,
+    "maxTradesPerSymbol": 10,
+    "maxTradesPerMinute": 10
+  },
+  "capital": {
+    "initialCapital": 100000,
+    "currentEquity": 100000
+  },
+  "modes": {
+    "defensiveDrawdownThreshold": 0.05,
+    "lockdownOnDailyLoss": true,
+    "lockdownOnMaxDrawdown": true
+  }
+}
