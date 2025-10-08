@@ -33,14 +33,33 @@ class StrategyEngine:
         self.strategy_message_counts = {}  # Add per-strategy counting
 
     async def connect_nats(self):
-        self.nc = await nats.connect("nats://localhost:4222")
-        print("Connected to NATS")
+        """Connect to NATS with automatic reconnection"""
+        self.nc = await nats.connect(
+            servers=["nats://localhost:4222"],
+            name="strategy-engine",
+            reconnect_time_wait=2,  # Wait 2 seconds between reconnection attempts
+            max_reconnect_attempts=-1,  # Infinite reconnection attempts
+            error_cb=self._nats_error_handler,
+            disconnected_cb=self._nats_disconnected_handler,
+            reconnected_cb=self._nats_reconnected_handler,
+        )
+        print("✅ Connected to NATS with auto-reconnection enabled")
         
     async def disconnect(self):  # ADD: cleanup method
         self.running = False
         if self.nc:
             await self.nc.close()
             print("Disconnected from NATS")
+
+    # NATS connection event handlers
+    async def _nats_error_handler(self, error):
+        print(f"❌ NATS error: {error}")
+
+    async def _nats_disconnected_handler(self):
+        print("⚠️ NATS disconnected - will attempt to reconnect...")
+
+    async def _nats_reconnected_handler(self):
+        print("🔄 NATS reconnected successfully")
 
     async def process_bars(self, strategy_id, strategy_type="ma_cross"):
         print(f"📊 Setting up strategy: {strategy_id} (type: {strategy_type})")

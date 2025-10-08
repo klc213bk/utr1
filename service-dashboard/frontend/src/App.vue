@@ -11,6 +11,10 @@
           <span class="nav-icon">🏠</span>
           <span>Dashboard</span>
         </router-link>
+        <router-link to="/trading" class="nav-link">
+          <span class="icon">🎯</span>
+          Trading Control
+        </router-link>
         <router-link to="/analytics" class="nav-link" :class="{ active: $route.path.includes('/analytics') }">
           <span class="nav-icon">📈</span>
           <span>Analytics</span>

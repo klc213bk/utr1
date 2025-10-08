@@ -125,7 +125,7 @@ app.get('/api/equity/:backtestId', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+Anything 
 // New endpoint for Analytics.vue to get list of backtests
 app.get('/api/analytics', async (req, res) => {
   try {
@@ -141,7 +141,7 @@ app.get('/api/analytics', async (req, res) => {
   } catch (error) {
     console.error('Error fetching analytics:', error);
     res.status(500).json({ error: error.message });
-  }
+  }samuel321  
 });
 
 // Get metrics for Analytics.vue

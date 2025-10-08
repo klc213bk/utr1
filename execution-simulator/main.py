@@ -39,8 +39,17 @@ class ExecutionSimulator:
         }
         
     async def connect_nats(self):
-        self.nc = await nats.connect("nats://localhost:4222")
-        print("Execution Simulator connected to NATS")
+        """Connect to NATS with automatic reconnection"""
+        self.nc = await nats.connect(
+            servers=["nats://localhost:4222"],
+            name="execution-simulator",
+            reconnect_time_wait=2,  # Wait 2 seconds between reconnection attempts
+            max_reconnect_attempts=-1,  # Infinite reconnection attempts
+            error_cb=self._nats_error_handler,
+            disconnected_cb=self._nats_disconnected_handler,
+            reconnected_cb=self._nats_reconnected_handler,
+        )
+        print("✅ Execution Simulator connected to NATS with auto-reconnection enabled")
         
     async def disconnect(self):  # ADD: cleanup method
         self.running = False
@@ -48,10 +57,24 @@ class ExecutionSimulator:
             await self.nc.close()
             print("Disconnected from NATS")
 
+    # NATS connection event handlers
+    async def _nats_error_handler(self, error):
+        print(f"❌ NATS error: {error}")
+
+    async def _nats_disconnected_handler(self):
+        print("⚠️ NATS disconnected - will attempt to reconnect...")
+
+    async def _nats_reconnected_handler(self):
+        print("🔄 NATS reconnected successfully")
+
     async def start_subscriptions(self):
-        # Subscribe to strategy signals
-        await self.nc.subscribe("strategy.signals.*", cb=self.handle_signal)
-        print("Subscribed to strategy.signals.*")
+        # Subscribe to APPROVED signals only (filtered by risk manager)
+        await self.nc.subscribe("risk.approved.*", cb=self.handle_signal)
+        print("✅ Subscribed to risk.approved.* (risk-checked signals only)")
+
+        # Also subscribe to rejected signals for logging
+        await self.nc.subscribe("risk.rejected.*", cb=self.handle_rejected_signal)
+        print("📊 Subscribed to risk.rejected.* (for monitoring)")
         
         # Subscribe to market data for pricing
         await self.nc.subscribe("md.equity.spy.bars.1m.replay", cb=self.handle_market_data)
@@ -90,10 +113,19 @@ class ExecutionSimulator:
         print("🔄 Positions reset to zero")
         return {"success": True, "message": "Positions reset"}
             
+    async def handle_rejected_signal(self, msg):
+        """Log rejected signals for monitoring"""
+        try:
+            data = json.loads(msg.data.decode())
+            print(f"⚠️ Signal REJECTED by risk manager: {data.get('symbol')} {data.get('action')} - Reason: {data.get('rejectionReason')}")
+        except Exception as e:
+            print(f"Error handling rejected signal: {e}")
+
     async def handle_signal(self, msg):
+        """Handle APPROVED signals from risk manager"""
         if not self.running:
             return
-        
+
         try:
             signal = json.loads(msg.data.decode())
             
