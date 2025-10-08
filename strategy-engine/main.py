@@ -10,6 +10,9 @@ import uvicorn
 import nats
 from datetime import datetime
 
+# Import the new strategy framework
+from strategies import get_registry, BaseStrategy, Signal, SignalType
+
 app = FastAPI()
 
 # Configure CORS immediately after creating app
@@ -26,11 +29,14 @@ shutdown_event = asyncio.Event()
 class StrategyEngine:
     def __init__(self):
         self.nc = None
-        self.strategies = {}
-        self.bars_data = {}  # Store recent bars for each strategy
-        self.running = True  # ADD: flag to control processing
+        self.strategies = {}  # Maps strategy_id -> {sub, status, type, instance}
+        self.running = True
         self.message_count = 0
-        self.strategy_message_counts = {}  # Add per-strategy counting
+        self.strategy_message_counts = {}
+
+        # Initialize strategy registry
+        self.registry = get_registry()
+        print(f"📚 Strategy registry loaded: {self.registry}")
 
     async def connect_nats(self):
         """Connect to NATS with automatic reconnection"""
@@ -61,61 +67,97 @@ class StrategyEngine:
     async def _nats_reconnected_handler(self):
         print("🔄 NATS reconnected successfully")
 
-    async def process_bars(self, strategy_id, strategy_type="ma_cross"):
+    async def process_bars(self, strategy_id, strategy_type="ma_cross", params=None):
+        """
+        Set up a strategy instance and subscribe to market data
+
+        Args:
+            strategy_id: Unique identifier for this strategy instance
+            strategy_type: Name of the strategy (e.g., 'ma_cross', 'rsi', 'buy_hold')
+            params: Optional parameters to pass to the strategy
+        """
         print(f"📊 Setting up strategy: {strategy_id} (type: {strategy_type})")
+
+        # Create strategy instance from registry
+        try:
+            strategy_params = params or {}
+            strategy_instance = self.registry.create_strategy(
+                strategy_name=strategy_type,
+                strategy_id=strategy_id,
+                params=strategy_params
+            )
+
+            # Call on_start lifecycle hook
+            strategy_instance.on_start()
+
+        except ValueError as e:
+            print(f"❌ Failed to create strategy: {e}")
+            raise
 
         # Initialize counter for this strategy
         self.strategy_message_counts[strategy_id] = 0
-        
+
         async def message_handler(msg):
-            print(f"Received message on {msg.subject}")  # Debug: see if messages arrive
- 
             self.message_count += 1
-            self.strategy_message_counts[strategy_id] += 1  # Count per strategy
-            
+            self.strategy_message_counts[strategy_id] += 1
+
             if not self.running:
                 return
 
             try:
                 bar = json.loads(msg.data.decode())
-                print(f"Processing bar: time={bar.get('time')}, close={bar.get('close')}")  # Debug
 
-                # Simple MA crossover logic
-                if strategy_id not in self.bars_data:
-                    self.bars_data[strategy_id] = []
-                
-                close_price = float(bar.get('close', 0))
-                self.bars_data[strategy_id].append(close_price)
+                # Process bar through strategy
+                signal = strategy_instance.process_bar(bar)
 
-                # Keep only last 50 bars
-                # Keep only last 50 bars (or more for RSI)
-                max_bars = 50 if strategy_type != "rsi" else 60
-                if len(self.bars_data[strategy_id]) > max_bars:
-                    self.bars_data[strategy_id].pop(0)
-                
-                # Route to appropriate strategy logic
-                if strategy_type == "ma_cross":
-                    await self.ma_crossover_strategy(strategy_id, bar, close_price)
-                elif strategy_type == "rsi":
-                    await self.rsi_strategy(strategy_id, bar, close_price)
-                elif strategy_type == "buy_hold":
-                    await self.buy_hold_strategy(strategy_id, bar, close_price)
-                else:
-                    # Default to MA crossover
-                    await self.ma_crossover_strategy(strategy_id, bar, close_price)
-                        
+                # If strategy generated a signal, publish it
+                if signal:
+                    await self.publish_signal(signal)
+
             except Exception as e:
-                print(f"Error processing bar: {e}")
+                print(f"❌ Error processing bar in {strategy_id}: {e}")
                 import traceback
                 traceback.print_exc()
-        
+
+        # Subscribe to market data
         sub = await self.nc.subscribe("md.equity.spy.bars.1m.replay", cb=message_handler)
+
+        # Store strategy info
         self.strategies[strategy_id] = {
-            "sub": sub, 
+            "sub": sub,
             "status": "running",
-            "type": strategy_type
+            "type": strategy_type,
+            "instance": strategy_instance
         }
-        print(f"✅ Strategy {strategy_id} ({strategy_type}) subscribed to md.equity.spy.bars.1m.replay")
+
+        print(f"✅ Strategy {strategy_id} ({strategy_type}) subscribed to market data")
+
+    async def publish_signal(self, signal: Signal):
+        """
+        Publish a trading signal to NATS
+
+        Args:
+            signal: Signal object from strategy
+        """
+        try:
+            # Convert signal to dictionary
+            signal_dict = signal.to_dict()
+
+            # Publish to strategy-specific channel
+            subject = f"strategy.signals.{signal.strategy_id}"
+            await self.nc.publish(subject, json.dumps(signal_dict).encode())
+
+            print(f"📡 Published {signal.action.value} signal for {signal.symbol} at ${signal.price:.2f}")
+
+        except Exception as e:
+            print(f"❌ Failed to publish signal: {e}")
+
+    # =========================================================================
+    # OLD STRATEGY METHODS - NO LONGER USED (kept for backward compatibility)
+    # =========================================================================
+    # These methods are deprecated and no longer called. They are kept here
+    # temporarily for reference but will be removed in a future version.
+    # All strategies now use the BaseStrategy interface.
 
     async def ma_crossover_strategy(self, strategy_id, bar, close_price):
         """Moving Average Crossover Strategy (20/50)"""
@@ -279,63 +321,124 @@ async def get_strategies_status():
     """Check which strategies are loaded and their subscription status"""
     status = {}
     for strategy_id, strategy_info in engine.strategies.items():
+        strategy_instance = strategy_info.get("instance")
+        strategy_state = strategy_instance.get_state() if strategy_instance else {}
+
         status[strategy_id] = {
             "status": strategy_info["status"],
+            "type": strategy_info["type"],
             "subscription_active": strategy_info.get("sub") is not None,
-            "bars_collected": len(engine.bars_data.get(strategy_id, [])),
             "messages_processed": engine.strategy_message_counts.get(strategy_id, 0),
-            "last_5_closes": engine.bars_data.get(strategy_id, [])[-5:] if strategy_id in engine.bars_data else []
+            "strategy_state": strategy_state
         }
-    
+
     return {
         "service": "strategy-engine",
         "nats_connected": engine.nc is not None and not engine.nc.is_closed,
         "total_messages": engine.message_count,
         "strategies": status,
-        "engine_running": engine.running
+        "engine_running": engine.running,
+        "available_strategies": engine.registry.list_strategies()
     }
 
 @app.post("/strategies/load")
 async def load_strategy(config: dict):
-    strategy_id = config.get("id", f"strategy_{len(engine.strategies)}")
-    strategy_type = config.get("strategy", "ma_cross")  # Get strategy type from config
+    """
+    Load a strategy with custom parameters
 
-    print(f"Loading strategy: {strategy_id} of type: {strategy_type}")
-
-    await engine.process_bars(strategy_id, strategy_type)
-
-    return {
-        "success": True, 
-        "id": strategy_id,
-        "type": strategy_type
+    Request body:
+    {
+        "id": "my_strategy_instance",  # Optional, auto-generated if not provided
+        "strategy": "ma_cross",  # Strategy name from registry
+        "params": {  # Optional parameters
+            "symbol": "SPY",
+            "fast_period": 20,
+            "slow_period": 50
+        }
     }
+    """
+    strategy_id = config.get("id", f"strategy_{len(engine.strategies)}")
+    strategy_type = config.get("strategy", "ma_cross")
+    strategy_params = config.get("params", {})
+
+    print(f"📊 Loading strategy: {strategy_id} of type: {strategy_type}")
+    if strategy_params:
+        print(f"   Parameters: {strategy_params}")
+
+    try:
+        await engine.process_bars(strategy_id, strategy_type, strategy_params)
+
+        return {
+            "success": True,
+            "id": strategy_id,
+            "type": strategy_type,
+            "params": strategy_params
+        }
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "available_strategies": [s["name"] for s in engine.registry.list_strategies()]
+        }
 
 @app.post("/strategies/unload/{strategy_id}")
 async def unload_strategy(strategy_id: str):
     """Unload a specific strategy"""
     if strategy_id in engine.strategies:
         strategy_info = engine.strategies[strategy_id]
+
+        # Call on_stop lifecycle hook
+        strategy_instance = strategy_info.get("instance")
+        if strategy_instance:
+            strategy_instance.on_stop()
+
+        # Unsubscribe from NATS
         if strategy_info.get("sub"):
             await strategy_info["sub"].unsubscribe()
-        
+
         del engine.strategies[strategy_id]
-        
+
         # Clean up associated data
-        if strategy_id in engine.bars_data:
-            del engine.bars_data[strategy_id]
         if strategy_id in engine.strategy_message_counts:
             del engine.strategy_message_counts[strategy_id]
-        
-        print(f"Unloaded strategy: {strategy_id}")
+
+        print(f"✅ Unloaded strategy: {strategy_id}")
         return {"success": True, "message": f"Strategy {strategy_id} unloaded"}
-    
+
     return {"success": False, "message": f"Strategy {strategy_id} not found"}
+
+@app.get("/strategies/available")
+async def get_available_strategies():
+    """Get list of all available strategies that can be loaded"""
+    strategies = engine.registry.list_strategies()
+    return {
+        "success": True,
+        "strategies": strategies,
+        "count": len(strategies)
+    }
+
+@app.get("/strategies/info/{strategy_name}")
+async def get_strategy_info(strategy_name: str):
+    """Get detailed information about a specific strategy"""
+    try:
+        info = engine.registry.get_strategy_info(strategy_name)
+        return {
+            "success": True,
+            "info": info
+        }
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "available_strategies": [s["name"] for s in engine.registry.list_strategies()]
+        }
 
 @app.get("/health")
 async def health():
     return {
         "status": "running" if engine.running else "shutting_down",
-        "strategies": len(engine.strategies),
+        "strategies_loaded": len(engine.strategies),
+        "strategies_available": len(engine.registry.list_strategies()),
         "connected": engine.nc is not None and not engine.nc.is_closed
     }
 
