@@ -45,6 +45,9 @@ async function init() {
     // Subscribe to NATS subjects
     await subscribeToFills(nc);
     await subscribeToMarketData(nc);
+    await subscribeToStrategySignals(nc);
+    await subscribeToRiskApproved(nc);
+    await subscribeToRiskRejected(nc);
 
     logger.info('✅ Portfolio Manager ready');
 
@@ -81,6 +84,18 @@ async function subscribeToFills(nc) {
             fill,
             portfolioValue: result.portfolioValue,
             cash: result.cashAfter,
+            realizedPnL: result.realizedPnL
+          });
+
+          // Emit to activity feed
+          io.emit('activity:fill', {
+            type: 'fill',
+            timestamp: new Date().toISOString(),
+            symbol: fill.symbol,
+            action: fill.action,
+            quantity: fill.quantity,
+            price: fill.price,
+            portfolioValue: result.portfolioValue,
             realizedPnL: result.realizedPnL
           });
         }
@@ -124,10 +139,122 @@ async function subscribeToMarketData(nc) {
               price: data.price,
               unrealizedPnL: updatedState.unrealizedPnL
             });
+
+            // Emit to activity feed
+            io.emit('activity:price', {
+              type: 'price',
+              timestamp: new Date().toISOString(),
+              symbol: data.symbol,
+              price: data.price
+            });
           }
         }
       } catch (error) {
         logger.error(`Error processing market data: ${error.message}`);
+      }
+    }
+  })();
+}
+
+/**
+ * Subscribe to strategy signals
+ * Subject: strategy.signals.>
+ */
+async function subscribeToStrategySignals(nc) {
+  const sub = nc.subscribe('strategy.signals.>');
+
+  logger.info('📡 Subscribed to strategy.signals.>');
+
+  (async () => {
+    for await (const msg of sub) {
+      try {
+        const signal = JSON.parse(msg.data);
+
+        // Emit to activity feed
+        if (io) {
+          io.emit('activity:signal', {
+            type: 'signal',
+            timestamp: new Date().toISOString(),
+            strategyId: signal.strategy_id,
+            symbol: signal.symbol,
+            action: signal.action,
+            quantity: signal.quantity,
+            price: signal.price
+          });
+        }
+
+        logger.debug(`Strategy signal: ${signal.action} ${signal.quantity} ${signal.symbol} @ ${signal.price}`);
+      } catch (error) {
+        logger.error(`Error processing strategy signal: ${error.message}`);
+      }
+    }
+  })();
+}
+
+/**
+ * Subscribe to risk approved signals
+ * Subject: risk.approved.>
+ */
+async function subscribeToRiskApproved(nc) {
+  const sub = nc.subscribe('risk.approved.>');
+
+  logger.info('📡 Subscribed to risk.approved.>');
+
+  (async () => {
+    for await (const msg of sub) {
+      try {
+        const signal = JSON.parse(msg.data);
+
+        // Emit to activity feed
+        if (io) {
+          io.emit('activity:risk-approved', {
+            type: 'risk-approved',
+            timestamp: new Date().toISOString(),
+            strategyId: signal.strategy_id,
+            symbol: signal.symbol,
+            action: signal.action,
+            quantity: signal.quantity
+          });
+        }
+
+        logger.debug(`Risk approved: ${signal.action} ${signal.quantity} ${signal.symbol}`);
+      } catch (error) {
+        logger.error(`Error processing risk approved: ${error.message}`);
+      }
+    }
+  })();
+}
+
+/**
+ * Subscribe to risk rejected signals
+ * Subject: risk.rejected.>
+ */
+async function subscribeToRiskRejected(nc) {
+  const sub = nc.subscribe('risk.rejected.>');
+
+  logger.info('📡 Subscribed to risk.rejected.>');
+
+  (async () => {
+    for await (const msg of sub) {
+      try {
+        const data = JSON.parse(msg.data);
+
+        // Emit to activity feed
+        if (io) {
+          io.emit('activity:risk-rejected', {
+            type: 'risk-rejected',
+            timestamp: new Date().toISOString(),
+            strategyId: data.strategy_id,
+            symbol: data.symbol,
+            action: data.action,
+            quantity: data.quantity,
+            reason: data.rejectionReason
+          });
+        }
+
+        logger.debug(`Risk rejected: ${data.action} ${data.quantity} ${data.symbol} - ${data.rejectionReason}`);
+      } catch (error) {
+        logger.error(`Error processing risk rejected: ${error.message}`);
       }
     }
   })();
@@ -152,6 +279,21 @@ function createApp() {
       activeSessions,
       timestamp: new Date().toISOString()
     });
+  });
+
+  // Shutdown endpoint (for service dashboard control)
+  app.post('/api/shutdown', (req, res) => {
+    logger.info('Shutdown requested via API');
+
+    res.json({
+      success: true,
+      message: 'Portfolio Manager shutting down...'
+    });
+
+    // Give response time to send, then shutdown
+    setTimeout(() => {
+      shutdown();
+    }, 100);
   });
 
   // API routes

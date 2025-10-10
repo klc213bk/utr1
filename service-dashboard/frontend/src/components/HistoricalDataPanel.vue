@@ -150,10 +150,15 @@ async function fetchLatestBar() {
       // Parse and format the latest bar time
       const barTime = response.data.latestBar
       latestBar.value = formatBarTime(barTime)
-      setSmartDefaults()
+    } else {
+      // No data in database yet
+      latestBar.value = 'No data collected yet'
     }
+    // Always set defaults after fetching latest bar info
+    setSmartDefaults()
   } catch (error) {
     console.error('Failed to fetch latest bar:', error)
+    latestBar.value = 'Error fetching data'
   }
 }
 
@@ -177,28 +182,25 @@ function formatBarTime(timestamp) {
 
 function setSmartDefaults() {
   const today = new Date()
-  
-  if (latestBar.value) {
+
+  // End date is always yesterday
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  endDate.value = yesterday.toISOString().split('T')[0]
+
+  // Check if we have actual bar data (not error messages)
+  if (latestBar.value &&
+      latestBar.value !== 'No data collected yet' &&
+      latestBar.value !== 'Error fetching data') {
     // Parse latest bar date and add 1 day for start
     const latestDate = new Date(latestBar.value)
     latestDate.setDate(latestDate.getDate() + 1)
     startDate.value = latestDate.toISOString().split('T')[0]
-    
-    // End date is min(start + 29 days, today)
-    const endDateCalc = new Date(latestDate)
-    endDateCalc.setDate(endDateCalc.getDate() + 29)
-    
-    if (endDateCalc > today) {
-      endDate.value = today.toISOString().split('T')[0]
-    } else {
-      endDate.value = endDateCalc.toISOString().split('T')[0]
-    }
   } else {
-    // No data yet, default to last 30 days
-    endDate.value = today.toISOString().split('T')[0]
-    const startDateCalc = new Date(today)
-    startDateCalc.setDate(startDateCalc.getDate() - 29)
-    startDate.value = startDateCalc.toISOString().split('T')[0]
+    // No data yet, default to 7 days ago
+    const weekAgo = new Date(today)
+    weekAgo.setDate(weekAgo.getDate() - 7)
+    startDate.value = weekAgo.toISOString().split('T')[0]
   }
 }
 

@@ -102,6 +102,7 @@ import axios from 'axios'
 import BacktestMode from './modes/BacktestMode.vue'
 import PaperTradingMode from './modes/PaperTradingMode.vue'
 import LiveTradingMode from './modes/LiveTradingMode.vue'
+import { generateSessionId } from '@/utils/sessionId'
 
 // State
 const selectedMode = ref('backtest')
@@ -126,7 +127,7 @@ watch(selectedMode, (newMode, oldMode) => {
 // Backtest functions
 async function startBacktest(config) {
   try {
-    const response = await axios.post('http://localhost:8083/api/backtest/start', config)
+    const response = await axios.post('http://localhost:3000/api/backtest/run', config)
     isRunning.value = true
     currentMode.value = 'backtest'
   } catch (error) {
@@ -136,7 +137,7 @@ async function startBacktest(config) {
 
 async function stopBacktest() {
   try {
-    await axios.post('http://localhost:8083/api/backtest/stop')
+    await axios.post('http://localhost:3000/api/backtest/stop')
     isRunning.value = false
   } catch (error) {
     alert(`Failed to stop backtest: ${error.message}`)
@@ -146,34 +147,63 @@ async function stopBacktest() {
 // Paper trading functions
 async function startPaperTrading(config) {
   try {
-    // Create portfolio session
-    await axios.post('http://localhost:8088/api/portfolio/session/create', {
-      sessionId: 'paper',
+    // Generate unique session ID
+    const sessionId = generateSessionId('paper', config.strategy || 'unknown')
+    console.log(`📝 Starting paper trading session: ${sessionId}`)
+
+    // 1. Subscribe to market data from IB via TWS Bridge
+    try {
+      await axios.post('http://localhost:8081/api/marketdata/spy/subscribe')
+      console.log('✅ Subscribed to SPY market data')
+    } catch (error) {
+      console.warn('⚠️ Failed to subscribe to market data:', error.message)
+      console.warn('Make sure TWS Bridge is running and connected to IB')
+      // Don't fail paper trading start if market data subscription fails
+    }
+
+    // 2. Create portfolio session
+    const createResponse = await axios.post('http://localhost:8088/api/portfolio/session/create', {
+      sessionId: sessionId,
       initialCapital: config.initialCapital || 100000
     })
+    console.log('✅ Portfolio session created:', createResponse.data)
 
-    // Create trading session
-    await axios.post('http://localhost:3000/api/trading-sessions/create', {
-      sessionId: 'paper',
-      sessionType: 'paper',
-      strategyName: config.strategy,
-      initialCapital: config.initialCapital || 100000,
-      status: 'active'
-    })
+    // 3. Verify session was created
+    await new Promise(resolve => setTimeout(resolve, 500)) // Wait 500ms for DB writes
+    const verifyResponse = await axios.get(`http://localhost:8088/api/portfolio/state/${sessionId}`)
+    console.log('✅ Portfolio session verified:', verifyResponse.data)
 
     isRunning.value = true
     currentMode.value = 'paper'
+    paperSession.value = { ...verifyResponse.data, sessionId }
 
-    // Start polling for updates
-    startSessionPolling('paper')
+    // 4. Start polling for updates
+    startSessionPolling(sessionId)
   } catch (error) {
-    alert(`Failed to start paper trading: ${error.message}`)
+    console.error('Paper trading start error:', error)
+
+    let errorMsg = `Failed to start paper trading: ${error.message}`
+
+    if (error.message.includes('404')) {
+      errorMsg += '\n\n❌ Portfolio Manager session not found.\n\nPlease check:\n1. Portfolio Manager is running (port 8088)\n2. Database tables are created (run setup_database.sql)\n3. Restart Portfolio Manager after code updates'
+    } else if (error.message.includes('Network Error') || error.message.includes('ECONNREFUSED')) {
+      errorMsg += '\n\n❌ Cannot connect to Portfolio Manager.\n\nMake sure Portfolio Manager is running on port 8088'
+    }
+
+    alert(errorMsg)
   }
 }
 
 async function stopPaperTrading() {
+  const sessionId = paperSession.value?.sessionId
+  if (!sessionId) {
+    alert('No active paper trading session found')
+    return
+  }
+
   const confirmed = confirm(
     'Stop paper trading session?\n\n' +
+    `Session: ${sessionId}\n` +
     `Current P&L: $${paperSession.value?.totalPnL || 0}\n` +
     `Open Positions: ${paperSession.value?.numPositions || 0}\n\n` +
     'Continue?'
@@ -182,7 +212,17 @@ async function stopPaperTrading() {
   if (!confirmed) return
 
   try {
-    await axios.post('http://localhost:8088/api/portfolio/session/close/paper')
+    // 1. Unsubscribe from market data
+    try {
+      await axios.post('http://localhost:8081/api/marketdata/spy/unsubscribe')
+      console.log('✅ Unsubscribed from SPY market data')
+    } catch (error) {
+      console.warn('⚠️ Failed to unsubscribe from market data:', error.message)
+      // Continue with stop even if unsubscribe fails
+    }
+
+    // 2. Close portfolio session
+    await axios.post(`http://localhost:8088/api/portfolio/session/close/${sessionId}`)
     isRunning.value = false
     paperSession.value = null
     stopSessionPolling()
@@ -206,8 +246,12 @@ async function startLiveTrading(config) {
   )
   if (!step2) return
 
+  // Generate unique session ID
+  const sessionId = generateSessionId('live', config.strategy || 'unknown')
+
   const confirmation = prompt(
     'Type "START LIVE TRADING" to confirm:\n\n' +
+    `Session: ${sessionId}\n` +
     `Initial Capital: $${config.initialCapital}\n` +
     `Strategy: ${config.strategy}\n` +
     `Max Daily Loss: $5,000`
@@ -219,15 +263,17 @@ async function startLiveTrading(config) {
   }
 
   try {
+    console.log(`🔴 Starting live trading session: ${sessionId}`)
+
     // Create portfolio session
     await axios.post('http://localhost:8088/api/portfolio/session/create', {
-      sessionId: 'live',
+      sessionId: sessionId,
       initialCapital: config.initialCapital
     })
 
     // Create trading session
     await axios.post('http://localhost:3000/api/trading-sessions/create', {
-      sessionId: 'live',
+      sessionId: sessionId,
       sessionType: 'live',
       strategyName: config.strategy,
       initialCapital: config.initialCapital,
@@ -236,19 +282,27 @@ async function startLiveTrading(config) {
 
     isRunning.value = true
     currentMode.value = 'live'
+    liveSession.value = { sessionId }
 
     // Start polling for updates
-    startSessionPolling('live')
+    startSessionPolling(sessionId)
 
-    alert('🔴 LIVE TRADING STARTED')
+    alert(`🔴 LIVE TRADING STARTED\nSession: ${sessionId}`)
   } catch (error) {
     alert(`Failed to start live trading: ${error.message}`)
   }
 }
 
 async function stopLiveTrading() {
+  const sessionId = liveSession.value?.sessionId
+  if (!sessionId) {
+    alert('No active live trading session found')
+    return
+  }
+
   const confirmed = confirm(
     '⚠️ STOP LIVE TRADING?\n\n' +
+    `Session: ${sessionId}\n` +
     `Current P&L: $${liveSession.value?.totalPnL || 0}\n` +
     `Open Positions: ${liveSession.value?.numPositions || 0}\n\n` +
     'This will close all positions at market price.\n\n' +
@@ -262,12 +316,12 @@ async function stopLiveTrading() {
   }
 
   try {
-    await axios.post('http://localhost:8088/api/portfolio/session/close/live')
+    await axios.post(`http://localhost:8088/api/portfolio/session/close/${sessionId}`)
     isRunning.value = false
     liveSession.value = null
     stopSessionPolling()
 
-    alert('Live trading stopped')
+    alert(`Live trading stopped\nSession: ${sessionId}`)
   } catch (error) {
     alert(`Failed to stop live trading: ${error.message}`)
   }
@@ -276,16 +330,18 @@ async function stopLiveTrading() {
 // Session polling
 let pollingInterval = null
 
-function startSessionPolling(sessionType) {
+function startSessionPolling(sessionId) {
   stopSessionPolling()
 
   pollingInterval = setInterval(async () => {
     try {
-      const response = await axios.get(`http://localhost:8088/api/portfolio/state/${sessionType}`)
-      if (sessionType === 'paper') {
-        paperSession.value = response.data
-      } else if (sessionType === 'live') {
-        liveSession.value = response.data
+      const response = await axios.get(`http://localhost:8088/api/portfolio/state/${sessionId}`)
+
+      // Determine session type from sessionId prefix
+      if (sessionId.startsWith('paper_')) {
+        paperSession.value = { ...response.data, sessionId }
+      } else if (sessionId.startsWith('live_')) {
+        liveSession.value = { ...response.data, sessionId }
       }
     } catch (error) {
       console.error('Failed to poll session state:', error)
@@ -354,7 +410,7 @@ onMounted(async () => {
 
   // Check for active backtest
   try {
-    const backtestResponse = await axios.get('http://localhost:8083/api/backtest/status')
+    const backtestResponse = await axios.get('http://localhost:3000/api/backtest/status')
     if (backtestResponse.data.isRunning) {
       isRunning.value = true
       currentMode.value = 'backtest'

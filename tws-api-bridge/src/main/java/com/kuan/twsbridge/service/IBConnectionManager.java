@@ -10,6 +10,7 @@ import com.ib.client.protobuf.OrderStatusProto.OrderStatus;
 import com.kuan.twsbridge.event.HistoricalDataEndEvent;
 import com.kuan.twsbridge.event.HistoricalDataErrorEvent;
 import com.kuan.twsbridge.event.HistoricalDataEvent;
+import com.kuan.twsbridge.event.HistoricalDataUpdateEvent;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -393,8 +394,11 @@ public class IBConnectionManager implements EWrapper {
     
     @Override
     public void historicalDataUpdate(int reqId, Bar bar) {
-    	log.debug("Historical data update (real-time) - ReqId: {}, Time: {}, Close: {}", 
+    	log.debug("Historical data update (real-time) - ReqId: {}, Time: {}, Close: {}",
                 reqId, bar.time(), bar.close());
+
+        // Publish UPDATE event (separate from initial historical data)
+        eventPublisher.publishEvent(new HistoricalDataUpdateEvent(this, reqId, bar));
     }
     
     @Override

@@ -9,9 +9,8 @@
         <div class="form-group">
           <label>Strategy</label>
           <select v-model="config.strategy">
-            <option value="momentum">Momentum Strategy</option>
-            <option value="ma_crossover">MA Crossover</option>
-            <option value="rsi">RSI Strategy</option>
+            <option value="ma_cross">Moving Average Crossover (20/50)</option>
+            <option value="rsi">RSI Strategy (14)</option>
             <option value="buy_hold">Buy & Hold</option>
           </select>
         </div>
@@ -125,6 +124,42 @@
         </div>
       </div>
 
+      <!-- Activity Feed -->
+      <div class="activity-feed-section">
+        <div class="activity-header">
+          <h4>📊 Live Activity Feed</h4>
+          <div class="activity-filters">
+            <button
+              v-for="filter in activityFilters"
+              :key="filter.value"
+              :class="['filter-btn', { active: activeFilter === filter.value }]"
+              @click="activeFilter = filter.value"
+            >
+              {{ filter.label }}
+            </button>
+          </div>
+        </div>
+        <div class="activity-list" ref="activityListRef">
+          <div
+            v-for="event in filteredActivities"
+            :key="event.id"
+            :class="['activity-item', event.type]"
+          >
+            <span class="activity-icon">{{ getActivityIcon(event.type) }}</span>
+            <div class="activity-content">
+              <div class="activity-main">
+                <span class="activity-time">{{ formatTime(event.timestamp) }}</span>
+                <span class="activity-text">{{ formatActivityText(event) }}</span>
+              </div>
+              <div v-if="event.reason" class="activity-reason">{{ event.reason }}</div>
+            </div>
+          </div>
+          <div v-if="filteredActivities.length === 0" class="no-activity">
+            No activity yet. Waiting for trading events...
+          </div>
+        </div>
+      </div>
+
       <!-- Actions -->
       <div class="actions">
         <button @click="$emit('stop')" class="btn-stop">
@@ -142,7 +177,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { io } from 'socket.io-client'
 
 const props = defineProps({
   isRunning: Boolean,
@@ -152,11 +188,36 @@ const props = defineProps({
 const emit = defineEmits(['start', 'stop'])
 
 const config = ref({
-  strategy: 'momentum',
+  strategy: 'ma_cross',
   symbol: 'SPY',
   initialCapital: 100000,
   maxDailyLoss: 5000,
   maxDrawdown: 10
+})
+
+// Activity feed state
+const activities = ref([])
+const activeFilter = ref('all')
+const activityListRef = ref(null)
+let activityIdCounter = 0
+let socket = null
+
+const activityFilters = [
+  { label: 'All', value: 'all' },
+  { label: 'Signals', value: 'signal' },
+  { label: 'Risk', value: 'risk' },
+  { label: 'Executions', value: 'fill' },
+  { label: 'Market', value: 'price' }
+]
+
+const filteredActivities = computed(() => {
+  if (activeFilter.value === 'all') {
+    return activities.value
+  }
+  if (activeFilter.value === 'risk') {
+    return activities.value.filter(a => a.type === 'risk-approved' || a.type === 'risk-rejected')
+  }
+  return activities.value.filter(a => a.type === activeFilter.value)
 })
 
 const pnlClass = computed(() => {
@@ -173,6 +234,124 @@ const pnlPercent = computed(() => {
 function formatNumber(num) {
   return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+// Activity feed functions
+function addActivity(event) {
+  activities.value.unshift({
+    ...event,
+    id: activityIdCounter++
+  })
+
+  // Limit to 50 events
+  if (activities.value.length > 50) {
+    activities.value.pop()
+  }
+
+  // Auto-scroll to top
+  nextTick(() => {
+    if (activityListRef.value) {
+      activityListRef.value.scrollTop = 0
+    }
+  })
+}
+
+function getActivityIcon(type) {
+  const icons = {
+    'signal': '📊',
+    'risk-approved': '✅',
+    'risk-rejected': '❌',
+    'fill': '💰',
+    'price': '📈'
+  }
+  return icons[type] || '•'
+}
+
+function formatActivityText(event) {
+  switch (event.type) {
+    case 'signal':
+      return `${event.action} ${event.quantity} ${event.symbol} @ $${event.price?.toFixed(2) || '?'}`
+    case 'risk-approved':
+      return `${event.action} ${event.quantity} ${event.symbol} APPROVED`
+    case 'risk-rejected':
+      return `${event.action} ${event.quantity} ${event.symbol} REJECTED`
+    case 'fill':
+      return `FILLED: ${event.action} ${event.quantity} ${event.symbol} @ $${event.price?.toFixed(2)}`
+    case 'price':
+      return `${event.symbol} → $${event.price?.toFixed(2)}`
+    default:
+      return JSON.stringify(event)
+  }
+}
+
+function formatTime(timestamp) {
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+function connectToActivityFeed() {
+  // Connect to Portfolio Manager WebSocket
+  socket = io('http://localhost:8088')
+
+  socket.on('connect', () => {
+    console.log('Connected to activity feed')
+  })
+
+  socket.on('activity:signal', (data) => {
+    addActivity(data)
+  })
+
+  socket.on('activity:risk-approved', (data) => {
+    addActivity(data)
+  })
+
+  socket.on('activity:risk-rejected', (data) => {
+    addActivity(data)
+  })
+
+  socket.on('activity:fill', (data) => {
+    addActivity(data)
+  })
+
+  socket.on('activity:price', (data) => {
+    addActivity(data)
+  })
+
+  socket.on('disconnect', () => {
+    console.log('Disconnected from activity feed')
+  })
+}
+
+function disconnectFromActivityFeed() {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+}
+
+// Watch isRunning to connect/disconnect from activity feed
+watch(() => props.isRunning, (running) => {
+  if (running) {
+    connectToActivityFeed()
+  } else {
+    disconnectFromActivityFeed()
+    activities.value = []
+  }
+}, { immediate: true })
+
+// Lifecycle hooks
+onMounted(() => {
+  if (props.isRunning) {
+    connectToActivityFeed()
+  }
+})
+
+onUnmounted(() => {
+  disconnectFromActivityFeed()
+})
 
 function start() {
   emit('start', config.value)
@@ -238,6 +417,12 @@ function promoteToLive() {
       &::placeholder {
         color: rgba(255, 255, 255, 0.5);
       }
+    }
+
+    select option {
+      background: #1e293b;
+      color: white;
+      padding: 0.5rem;
     }
   }
 
@@ -449,6 +634,158 @@ function promoteToLive() {
         background: rgba(239, 68, 68, 0.3);
       }
     }
+  }
+
+  // Activity Feed
+  .activity-feed-section {
+    margin-bottom: 2rem;
+
+    .activity-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+
+      h4 {
+        margin: 0;
+      }
+
+      .activity-filters {
+        display: flex;
+        gap: 0.5rem;
+
+        .filter-btn {
+          padding: 0.4rem 0.8rem;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: rgba(255, 255, 255, 0.7);
+          border-radius: 6px;
+          font-size: 0.85rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+
+          &:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+          }
+
+          &.active {
+            background: rgba(96, 165, 250, 0.2);
+            border-color: #60a5fa;
+            color: #60a5fa;
+          }
+        }
+      }
+    }
+
+    .activity-list {
+      max-height: 300px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+
+      &::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      &::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 3px;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 3px;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.3);
+        }
+      }
+
+      .activity-item {
+        display: flex;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        margin-bottom: 0.5rem;
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 3px solid transparent;
+        border-radius: 6px;
+        animation: fadeIn 0.3s ease;
+
+        &.signal {
+          border-left-color: #60a5fa;
+        }
+
+        &.risk-approved {
+          border-left-color: #4ade80;
+        }
+
+        &.risk-rejected {
+          border-left-color: #f87171;
+        }
+
+        &.fill {
+          border-left-color: #fbbf24;
+        }
+
+        &.price {
+          border-left-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .activity-icon {
+          font-size: 1.2rem;
+          flex-shrink: 0;
+        }
+
+        .activity-content {
+          flex: 1;
+          min-width: 0;
+
+          .activity-main {
+            display: flex;
+            gap: 0.5rem;
+            align-items: baseline;
+
+            .activity-time {
+              font-size: 0.75rem;
+              color: rgba(255, 255, 255, 0.5);
+              flex-shrink: 0;
+            }
+
+            .activity-text {
+              font-size: 0.9rem;
+              color: white;
+            }
+          }
+
+          .activity-reason {
+            font-size: 0.8rem;
+            color: #f87171;
+            margin-top: 0.25rem;
+            font-style: italic;
+          }
+        }
+      }
+
+      .no-activity {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: rgba(255, 255, 255, 0.5);
+        font-style: italic;
+      }
+    }
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>

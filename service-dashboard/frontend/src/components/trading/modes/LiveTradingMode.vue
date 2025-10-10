@@ -27,9 +27,9 @@
         <div class="form-group">
           <label>Strategy</label>
           <select v-model="config.strategy">
-            <option value="momentum">Momentum Strategy</option>
-            <option value="ma_crossover">MA Crossover</option>
-            <option value="rsi">RSI Strategy</option>
+            <option value="ma_cross">Moving Average Crossover (20/50)</option>
+            <option value="rsi">RSI Strategy (14)</option>
+            <option value="buy_hold">Buy & Hold</option>
           </select>
         </div>
 
@@ -224,7 +224,7 @@ const props = defineProps({
 const emit = defineEmits(['start', 'stop'])
 
 const config = ref({
-  strategy: 'momentum',
+  strategy: 'ma_cross',
   symbol: 'SPY',
   initialCapital: 100000
 })
@@ -459,6 +459,12 @@ function viewDetails() {
       border-radius: 8px;
       color: white;
       font-size: 1rem;
+    }
+
+    select option {
+      background: #1e293b;
+      color: white;
+      padding: 0.5rem;
     }
 
     .warning-text {

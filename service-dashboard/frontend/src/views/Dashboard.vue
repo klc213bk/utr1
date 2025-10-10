@@ -31,16 +31,10 @@
       <!-- Data Management -->
       <section class="panel-section">
         <h2 class="section-title">Data Management</h2>
-        <HistoricalDataPanel 
-          :socket="socket" 
+        <HistoricalDataPanel
+          :socket="socket"
           :ibConnected="services.ib?.status === 'online'"
         />
-      </section>
-
-      <!-- Backtesting -->
-      <section class="panel-section">
-        <h2 class="section-title">Backtesting</h2>
-        <BacktestingPanel :socket="socket" />
       </section>
 
       <!-- Market Data -->
@@ -61,7 +55,6 @@ import ServiceCard from '../components/ServiceCard.vue'
 import MarketDataCard from '../components/MarketDataCard.vue'
 import TradingServicesPanel from '../components/backtesting/TradingServicesPanel.vue'
 import HistoricalDataPanel from '../components/HistoricalDataPanel.vue'
-import BacktestingPanel from '../components/backtesting/BacktestingPanel.vue'
 import { useServicesStore } from '../stores/services'
 
 const props = defineProps(['socket', 'services'])
