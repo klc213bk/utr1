@@ -119,7 +119,7 @@
           </table>
         </div>
         <div class="messages-footer">
-          Showing last {{ displayedMessages.length }} messages
+          Showing latest {{ displayedMessages.length }} messages
         </div>
       </div>
     </div>
@@ -168,13 +168,13 @@ const connectionStatus = computed(() => isConnected.value ? 'connected' : 'disco
 
 const displayedMessages = computed(() => {
   let filtered = messages.value
-  
+
   if (selectedSubject.value) {
     filtered = filtered.filter(m => m.subject === selectedSubject.value)
   }
-  
-  // Keep only last 100 messages
-  return filtered.slice(-100)
+
+  // Keep last 100 messages, reversed so newest appears first
+  return filtered.slice(-100).reverse()
 })
 
 // Methods
@@ -240,11 +240,11 @@ function processUpdate(data) {
   totalMessages.value = data.totalMessages || totalMessages.value
   currentRate.value = data.rate || 0
   
-  // Auto-scroll if at bottom
+  // Auto-scroll to top (newest messages at top)
   const container = messagesContainer.value
-  if (container && container.scrollHeight - container.scrollTop <= container.clientHeight + 50) {
+  if (container) {
     setTimeout(() => {
-      container.scrollTop = container.scrollHeight
+      container.scrollTop = 0
     }, 10)
   }
 }

@@ -35,7 +35,7 @@ async function startReplay({ startDate, endDate, speed = 1, backtestId = null })
   }
   
   // Use strings directly - no Date conversion needed
-  console.log(`🚀 Starting replay from ${startDate} to ${endDate} at ${speed}x speed`);
+  console.log(`🚀 Starting replay from ${startDate} to ${endDate} at ${speed}ms/bar (${(speed/1000).toFixed(3)}s/bar)`);
 
   // Reset state
   replayState = {
@@ -103,7 +103,7 @@ async function replayBars(startDate, endDate, speed) {
     replayState.totalBars = parseInt(countResult.rows[0].count);
     
     console.log(`📊 Found ${replayState.totalBars} bars to replay`);
-    console.log(`⚡ Speed: ${speed}x (${speed === 0 ? 'Maximum' : `1 bar every ${(60/speed).toFixed(1)} seconds`})`);
+    console.log(`⚡ Speed: ${speed}ms/bar (${speed === 0 ? 'Maximum' : `${(1000/speed).toFixed(1)} bars/second`})`);
 
     if (replayState.totalBars === 0) {
       throw new Error('No data found for the specified date range');
@@ -120,19 +120,20 @@ async function replayBars(startDate, endDate, speed) {
     const cursor = client.query(new Cursor(query, [utc1String, utc2String]));
     const batchSize = 100;
 
-  // Calculate delay between bars based on speed
+  // Calculate delay between bars based on speed (milliseconds per bar)
     let delayMs;
     if (speed === 0) {
       delayMs = 0; // Max speed - no delay
     } else {
-      // For 1-minute bars:
-      // 1x speed = 60 seconds per bar = 60000ms
-      // 10x speed = 6 seconds per bar = 6000ms
-      // 60x speed = 1 second per bar = 1000ms
-      delayMs = Math.round(60000 / speed); // 60 seconds / speed
+      // Speed parameter represents milliseconds per bar:
+      // 10ms = 100 bars/second (0.01s/bar)
+      // 50ms = 20 bars/second (0.05s/bar)
+      // 100ms = 10 bars/second (0.1s/bar)
+      // 1000ms = 1 bar/second (1s/bar)
+      delayMs = speed; // Direct milliseconds per bar
     }
 
-    console.log(`⏱️ Delay between bars: ${delayMs}ms`);
+    console.log(`⏱️ Delay between bars: ${delayMs}ms (${(delayMs/1000).toFixed(3)}s/bar)`);
     
     let lastPublishTime = Date.now();
 
@@ -265,7 +266,7 @@ async function replayBars(startDate, endDate, speed) {
     console.log(`   Bars published: ${replayState.barsPublished}`);
     console.log(`   Duration: ${duration.toFixed(1)} seconds`);
     console.log(`   Actual rate: ${actualRate.toFixed(2)} bars/sec`);
-    console.log(`   Target rate: ${speed === 0 ? 'Max' : (speed / 60).toFixed(2)} bars/sec`);
+    console.log(`   Target rate: ${speed === 0 ? 'Max' : (1000/speed).toFixed(2)} bars/sec`);
   }
 }
 

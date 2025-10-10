@@ -2138,22 +2138,22 @@ app.post('/api/backtest/run', async (req, res) => {
   
   try {
     // Simple validation
-    const { startDate, endDate, strategy, speed } = req.body;
-    
+    const { startDate, endDate, strategy, replaySpeed } = req.body;
+
     if (!startDate || !endDate) {
       return res.status(400).json({
         success: false,
         error: 'Start and end dates are required'
       });
     }
-    
+
     // Set defaults if not provided
     const backtestRequest = {
       startDate,
       endDate,
       symbol: req.body.symbol || 'SPY',
       strategy: strategy || 'ma_cross',
-      speed: speed || 10
+      speed: replaySpeed || 100  // Default to 100ms/bar (0.1s/bar)
     };
     
     console.log('Forwarding to backtest server:', backtestRequest);

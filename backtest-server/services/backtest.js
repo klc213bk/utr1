@@ -39,7 +39,7 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
   }
   
   console.log(`📊 Starting backtest from ${startDate} to ${endDate}`);
-  console.log(`   Strategy: ${strategy}, Speed: ${speed}x`);
+  console.log(`   Strategy: ${strategy}, Speed: ${speed}ms/bar (${(speed/1000).toFixed(3)}s/bar)`);
 
   // Generate backtest ID with human-readable format
   const backtestId = generateSessionId('bt', strategy);
