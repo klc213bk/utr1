@@ -2,6 +2,7 @@ const logger = require('../logger');
 const { getNATS } = require('../config/connections');
 const axios = require('axios');
 const { getDatabase } = require('../config/connections');
+const { generateSessionId } = require('../utils/sessionId');
 
 
 function getIO() {
@@ -39,19 +40,19 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
   
   console.log(`📊 Starting backtest from ${startDate} to ${endDate}`);
   console.log(`   Strategy: ${strategy}, Speed: ${speed}x`);
-  
-  // Generate backtest ID
-  const backtestId = `bt_${Date.now()}`;
+
+  // Generate backtest ID with human-readable format
+  const backtestId = generateSessionId('bt', strategy);
   logger.setSessionId(backtestId);
 
   // Insert into database
   const pgPool = getDatabase();
   try {
     const insertQuery = `
-      INSERT INTO trading_sessions 
-      (backtest_id, session_type, strategy_name, strategy_version, strategy_params, 
+      INSERT INTO trading_sessions
+      (session_id, session_type, strategy_name, strategy_version, strategy_params,
       start_date, end_date, initial_capital, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,'running')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
     `;
     
     const strategyParams = {
@@ -197,9 +198,9 @@ async function runBacktest({ startDate, endDate, symbol = 'SPY', strategy = 'ma_
       const pgPool = getDatabase();
       try {
         await pgPool.query(
-          `UPDATE backtest_sessions 
-          SET status = 'failed', completed_at = CURRENT_TIMESTAMP 
-          WHERE backtest_id = $1`,
+          `UPDATE trading_sessions
+          SET status = 'failed', completed_at = CURRENT_TIMESTAMP
+          WHERE session_id = $1`,
           [backtestId]
         );
       } catch (dbError) {
@@ -295,9 +296,9 @@ async function executeBacktest(backtestId) {
   const pgPool = getDatabase();
   try {
     await pgPool.query(
-      `UPDATE trading_sessions 
-      SET status = 'completed', completed_at = CURRENT_TIMESTAMP 
-      WHERE backtest_id = $1`,
+      `UPDATE trading_sessions
+      SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+      WHERE session_id = $1`,
       [backtestId]
     );
   } catch (dbError) {
@@ -371,9 +372,9 @@ async function stopBacktest() {
     const pgPool = getDatabase();
     try {
       await pgPool.query(
-        `UPDATE trading_sessions 
-        SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP 
-        WHERE backtest_id = $1`,
+        `UPDATE trading_sessions
+        SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+        WHERE session_id = $1`,
         [backtestId]
       );
     } catch (dbError) {

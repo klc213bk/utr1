@@ -484,6 +484,23 @@ app.post('/api/risk/override-mode', (req, res) => {
   }
 });
 
+/**
+ * Shutdown endpoint (for service dashboard control)
+ */
+app.post('/api/shutdown', (req, res) => {
+  logger.info('Shutdown requested via API');
+
+  res.json({
+    success: true,
+    message: 'Risk Manager shutting down...'
+  });
+
+  // Give response time to send, then shutdown
+  setTimeout(() => {
+    shutdown();
+  }, 100);
+});
+
 // ============================================================================
 // Graceful Shutdown
 // ============================================================================

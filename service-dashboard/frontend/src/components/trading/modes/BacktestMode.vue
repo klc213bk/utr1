@@ -12,7 +12,6 @@
           <select v-model="config.strategy">
             <option value="ma_cross">Moving Average Crossover (20/50)</option>
             <option value="rsi">RSI Strategy (14)</option>
-            <option value="momentum">Momentum Strategy</option>
             <option value="buy_hold">Buy & Hold</option>
           </select>
         </div>
@@ -150,6 +149,12 @@
         </div>
       </div>
 
+      <!-- NATS Message Monitoring -->
+      <BacktestNatsMonitor
+        :backtest-id="lastBacktestId"
+        :is-running="isRunning"
+      />
+
       <!-- Actions -->
       <div class="actions">
         <button @click="stop" class="btn-stop">
@@ -170,6 +175,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import axios from 'axios'
+import BacktestNatsMonitor from '../BacktestNatsMonitor.vue'
 
 const props = defineProps({
   isRunning: Boolean
@@ -180,21 +186,38 @@ const emit = defineEmits(['start', 'stop'])
 // Socket store for real-time updates
 const socketsStore = inject('socketsStore')
 
+// Helper function to get default dates
+function getDefaultDates() {
+  const today = new Date()
+
+  // End date: yesterday
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+
+  // Start date: 3 days before today
+  const threeDaysAgo = new Date(today)
+  threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
+
+  return {
+    startDate: threeDaysAgo.toISOString().split('T')[0],
+    endDate: yesterday.toISOString().split('T')[0]
+  }
+}
+
 // Configuration
 const config = ref({
   strategy: 'ma_cross',
   symbol: 'SPY',
-  startDate: '2023-01-01',
-  endDate: '2023-12-31',
+  ...getDefaultDates(),
   initialCapital: 100000,
-  replaySpeed: 1000
+  replaySpeed: 100  // Default to 0.1s/bar (normal speed)
 })
 
 const speeds = [
-  { value: 100, label: '10x' },
-  { value: 500, label: '2x' },
-  { value: 1000, label: '1x' },
-  { value: 2000, label: '0.5x' }
+  { value: 10, label: '0.01s/bar' },     // Fastest (100 bars/second)
+  { value: 50, label: '0.05s/bar' },     // Fast (20 bars/second)
+  { value: 100, label: '0.1s/bar' },     // Normal (10 bars/second)
+  { value: 1000, label: '1s/bar' }       // Slow (1 bar/second)
 ]
 
 // State
@@ -213,7 +236,8 @@ const maxDate = computed(() => {
 
 const dateRangeIsValid = computed(() => {
   if (!config.value.startDate || !config.value.endDate) return false
-  return new Date(config.value.startDate) < new Date(config.value.endDate)
+  // Allow same-day backtests (use <= instead of <)
+  return new Date(config.value.startDate) <= new Date(config.value.endDate)
 })
 
 const tradingDaysEstimate = computed(() => {
@@ -222,6 +246,10 @@ const tradingDaysEstimate = computed(() => {
   const end = new Date(config.value.endDate)
   const diffTime = Math.abs(end - start)
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+  // Handle same-day backtest (diffDays = 0)
+  if (diffDays === 0) return 1  // One trading day
+
   // Rough estimate: 252 trading days per year
   return Math.floor(diffDays * (252 / 365))
 })
@@ -349,6 +377,12 @@ onUnmounted(() => {
       &::placeholder {
         color: rgba(255, 255, 255, 0.5);
       }
+    }
+
+    select option {
+      background: #1e293b;
+      color: white;
+      padding: 0.5rem;
     }
   }
 

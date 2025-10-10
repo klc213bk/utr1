@@ -3,6 +3,7 @@ package com.kuan.twsbridge.service;
 import com.ib.client.*;
 import com.kuan.twsbridge.event.HistoricalDataEndEvent;
 import com.kuan.twsbridge.event.HistoricalDataEvent;
+import com.kuan.twsbridge.event.HistoricalDataUpdateEvent;
 
 import io.nats.client.Connection;
 import io.nats.client.Nats;
@@ -41,8 +42,10 @@ public class MarketDataService {
     private final AtomicInteger requestId = new AtomicInteger(1000);
     private Integer spyRequestId = null;
     private final AtomicBoolean isSubscribed = new AtomicBoolean(false);
-    
-    private static final String NATS_SUBJECT = "md.equity.spy.bars.1m";
+    private String lastPublishedBarTime = null; // Track last published bar to avoid duplicates
+
+    private static final String NATS_SUBJECT_BARS = "md.equity.spy.bars.1m";
+    private static final String NATS_SUBJECT_PRICE = "market.prices.SPY";
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter endTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd HH:mm:ss");
     
@@ -84,19 +87,30 @@ public class MarketDataService {
         }
     }
     
- // ADD: Event listeners if market data also uses historical data
+ // Event listeners for historical data
     @EventListener
     public void handleHistoricalDataEvent(HistoricalDataEvent event) {
-        // Only process if it's for our subscription
-    	log.info("event reqId:" + event.getReqId());
-        if (spyRequestId !=null && event.getReqId() == spyRequestId) {
+        // Only process if it's for our subscription (initial historical bars)
+    	log.debug("HistoricalDataEvent received - reqId: {}", event.getReqId());
+
+        if (spyRequestId != null && event.getReqId() == spyRequestId) {
             onHistoricalData(event.getReqId(), event.getBar());
         }
     }
-    
+
+    @EventListener
+    public void handleHistoricalDataUpdateEvent(HistoricalDataUpdateEvent event) {
+        // Only process if it's for our subscription (real-time updates)
+        log.debug("HistoricalDataUpdateEvent received - reqId: {}", event.getReqId());
+
+        if (spyRequestId != null && event.getReqId() == spyRequestId) {
+            onHistoricalDataUpdate(event.getReqId(), event.getBar());
+        }
+    }
+
     @EventListener
     public void handleHistoricalDataEndEvent(HistoricalDataEndEvent event) {
-        if (spyRequestId !=null && event.getReqId() == spyRequestId) {
+        if (spyRequestId != null && event.getReqId() == spyRequestId) {
             onHistoricalDataEnd(event.getReqId(), event.getStartDate(), event.getEndDate());
         }
     }
@@ -174,24 +188,26 @@ public class MarketDataService {
             log.warn("Not subscribed to SPY bars");
             return false;
         }
-        
+
         if (!connectionManager.getConnected().get()) {
             log.warn("IB is not connected, marking as unsubscribed");
             isSubscribed.set(false);
             spyRequestId = null;
+            lastPublishedBarTime = null; // Reset for next subscription
             return true;
         }
-        
+
         try {
             // Cancel historical data subscription
             connectionManager.getClient().cancelHistoricalData(spyRequestId);
             isSubscribed.set(false);
-            
+
             log.info("Unsubscribed from SPY bars (request ID: {})", spyRequestId);
             spyRequestId = null;
-            
+            lastPublishedBarTime = null; // Reset for next subscription
+
             return true;
-            
+
         } catch (Exception e) {
             log.error("Failed to unsubscribe from SPY bars", e);
             return false;
@@ -238,19 +254,33 @@ public class MarketDataService {
     
     /**
      * Publish bar data to NATS
+     * Dual-publish: full bars + simple price for trading system
+     * Deduplicates bars with same timestamp (IB sends multiple updates as bar forms)
      */
     private void publishToNats(Bar bar) {
         if (natsConnection == null || natsConnection.getStatus() != Connection.Status.CONNECTED) {
             log.warn("Cannot publish to NATS: not connected");
             return;
         }
-        
+
         try {
             // Parse the bar time (format: yyyyMMdd HH:mm:ss)
             String barTimeStr = bar.time();
-            
-            // Create JSON message with accurate 1-minute bar data
-            String json = String.format(
+
+            // Deduplicate: Only publish if this is a new bar (different timestamp)
+            if (barTimeStr.equals(lastPublishedBarTime)) {
+                log.debug("Skipping duplicate bar with timestamp: {}", barTimeStr);
+                return;
+            }
+
+            log.info("Publishing new bar: {} (price: {}, volume: {})",
+                     barTimeStr, bar.close(), bar.volume().longValue());
+
+            // Update last published timestamp
+            lastPublishedBarTime = barTimeStr;
+
+            // 1. Publish full OHLCV bar data to md.equity.spy.bars.1m
+            String barJson = String.format(
                 "{\"symbol\":\"SPY\",\"datetime\":\"%s\",\"open\":%.2f,\"high\":%.2f,\"low\":%.2f,\"close\":%.2f,\"volume\":%d,\"wap\":%.2f,\"count\":%d,\"barType\":\"1min\"}",
                 barTimeStr,
                 bar.open(),
@@ -261,12 +291,20 @@ public class MarketDataService {
                 bar.wap().value(),
                 bar.count()
             );
-            
-            // Publish to NATS
-            natsConnection.publish(NATS_SUBJECT, json.getBytes(StandardCharsets.UTF_8));
-            
-            log.debug("Published SPY 1-min bar to NATS: {}", json);
-            
+
+            natsConnection.publish(NATS_SUBJECT_BARS, barJson.getBytes(StandardCharsets.UTF_8));
+            log.debug("Published SPY 1-min bar to {}", NATS_SUBJECT_BARS);
+
+            // 2. Publish simple price to market.prices.SPY (for trading system)
+            String priceJson = String.format(
+                "{\"symbol\":\"SPY\",\"price\":%.2f,\"timestamp\":\"%s\"}",
+                bar.close(),
+                barTimeStr
+            );
+
+            natsConnection.publish(NATS_SUBJECT_PRICE, priceJson.getBytes(StandardCharsets.UTF_8));
+            log.debug("Published SPY price to {}", NATS_SUBJECT_PRICE);
+
         } catch (Exception e) {
             log.error("Failed to publish to NATS", e);
         }

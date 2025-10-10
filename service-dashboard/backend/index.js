@@ -1851,7 +1851,9 @@ async function stopService(serviceId) {
     'backtest-server': 'http://localhost:8083/api/shutdown',
     'strategy-engine': 'http://localhost:8084/api/shutdown',
     'execution-simulator': 'http://localhost:8085/api/shutdown',
-    'analytics-server': 'http://localhost:8087/api/shutdown'
+    'risk-manager': 'http://localhost:8086/api/shutdown',
+    'analytics-server': 'http://localhost:8087/api/shutdown',
+    'portfolio-manager': 'http://localhost:8088/api/shutdown'
   };
   
   // Check if we're managing this process
@@ -2417,9 +2419,102 @@ app.get('/api/monitor/stats', (req, res) => {
   res.json(stats);
 });
 
+// Subscribe to backtest lifecycle events and relay to Socket.IO
+async function setupBacktestMonitor() {
+  try {
+    const nc = await connect({
+      servers: config.nats.url,
+      name: 'dashboard-backtest-monitor'
+    });
+
+    // Subscribe to backtest lifecycle events
+    const lifecycleSub = nc.subscribe('backtest-*');
+
+    (async () => {
+      for await (const msg of lifecycleSub) {
+        try {
+          const subject = msg.subject;
+          const data = JSON.parse(msg.data.toString());
+
+          console.log(`[Backtest Monitor] Received ${subject}:`, data);
+
+          // Relay to Socket.IO clients based on subject
+          if (subject === 'backtest-started') {
+            io.emit('backtest:start', data);
+            backtestState.isRunning = true;
+            backtestState.currentBacktest = data;
+          } else if (subject === 'backtest-complete') {
+            io.emit('backtest:complete', data);
+            backtestState.isRunning = false;
+            if (backtestState.currentBacktest) {
+              backtestState.currentBacktest.status = 'completed';
+            }
+          } else if (subject === 'backtest-error') {
+            io.emit('backtest:error', data);
+            backtestState.isRunning = false;
+          } else if (subject === 'backtest-cancelled') {
+            io.emit('backtest:cancelled', data);
+            backtestState.isRunning = false;
+          }
+
+          // Update state for all clients
+          io.emit('backtest-state-update', backtestState);
+
+        } catch (err) {
+          console.error('[Backtest Monitor] Error processing message:', err);
+        }
+      }
+    })();
+
+    console.log('✅ Backtest monitor subscription setup complete');
+  } catch (err) {
+    console.error('❌ Failed to setup backtest monitor:', err);
+  }
+}
+
+// Setup backtest progress relay via polling
+// Since backtest-server emits Socket.IO events locally, we need to poll for progress
+let backtestProgressInterval = null;
+
+function startBacktestProgressPolling() {
+  if (backtestProgressInterval) {
+    clearInterval(backtestProgressInterval);
+  }
+
+  backtestProgressInterval = setInterval(async () => {
+    if (backtestState.isRunning) {
+      try {
+        const response = await axios.get('http://localhost:8083/api/backtest/status', {
+          timeout: 2000
+        });
+
+        if (response.data && response.data.currentBacktest) {
+          const progress = response.data.currentBacktest.progress || 0;
+
+          // Relay progress to Socket.IO clients
+          io.emit('backtest:progress', {
+            backtestId: response.data.currentBacktest.id,
+            progress: progress,
+            status: response.data.currentBacktest.status,
+            currentDate: response.data.currentBacktest.currentDate,
+            message: `Processing backtest... ${progress.toFixed(1)}%`
+          });
+
+          // Update local state
+          backtestState.currentBacktest = response.data.currentBacktest;
+        }
+      } catch (error) {
+        // Backtest server might not be running, ignore
+      }
+    }
+  }, 1000); // Poll every second
+}
+
 // Call this after NATS is initialized
 // Add to your startup sequence after checkAllServices()
 setupNATSMonitor();
+setupBacktestMonitor(); // Add backtest monitor
+startBacktestProgressPolling(); // Start progress polling
 
 // Start server
 const PORT = process.env.PORT || 3000;
